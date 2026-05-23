@@ -1027,16 +1027,24 @@ export default function CardIQ() {
   const [showAddCard, setShowAddCard] = useState(false);
   const [editCard, setEditCard]   = useState(null);
 
+  const [dbError, setDbError] = useState(null);
+
   // ── Load from Supabase ────────────────────────────────────────────────────
   useEffect(() => {
     const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user }, error: userErr } = await supabase.auth.getUser();
+      if (userErr) { console.error("Auth error:", userErr); }
       if (!user) return;
       setUserId(user.id);
-      const [{ data: cardRows }, { data: txnRows }] = await Promise.all([
+      const [{ data: cardRows, error: cardErr }, { data: txnRows, error: txnErr }] = await Promise.all([
         supabase.from("cards").select("id, data").eq("user_id", user.id).order("created_at"),
         supabase.from("transactions").select("id, card_id, data").eq("user_id", user.id).order("created_at", { ascending: false }),
       ]);
+      if (cardErr) {
+        console.error("Cards load error:", cardErr);
+        setDbError(cardErr);
+      }
+      if (txnErr) console.error("Txns load error:", txnErr);
       setCards((cardRows || []).map(r => ({ ...r.data, id: r.id })));
       setTxns((txnRows  || []).map(r => ({ ...r.data, id: r.id, cardId: r.card_id })));
       setLoading(false);
@@ -1094,13 +1102,21 @@ export default function CardIQ() {
     if (editCard) {
       setCards(prev => prev.map(c => c.id === id ? card : c));
       setEditCard(null);
-      supabase.from("cards").update({ data }).eq("id", id);
+      const { error } = await supabase.from("cards").update({ data }).eq("id", id);
+      if (error) {
+        console.error("Update failed:", error);
+        // Reload from DB to revert optimistic update
+        const { data: fresh } = await supabase.from("cards").select("id, data").eq("id", id).single();
+        if (fresh) setCards(prev => prev.map(c => c.id === id ? { ...fresh.data, id: fresh.id } : c));
+      }
     } else {
-      const { data: rows } = await supabase
+      const { data: rows, error } = await supabase
         .from("cards")
         .insert({ user_id: userId, data })
         .select("id, data");
-      if (rows?.[0]) {
+      if (error) {
+        console.error("Insert failed:", error);
+      } else if (rows?.[0]) {
         const r = rows[0];
         setCards(prev => [...prev, { ...r.data, id: r.id }]);
       }
@@ -1108,11 +1124,17 @@ export default function CardIQ() {
     }
   };
 
-  const handleDeleteCard = (id) => {
+  const handleDeleteCard = async (id) => {
     setCards(prev => prev.filter(c => c.id !== id));
     setTxns(prev  => prev.filter(t => t.cardId !== id));
     setSelectedCard(null);
-    supabase.from("cards").delete().eq("id", id);
+    const { error } = await supabase.from("cards").delete().eq("id", id);
+    if (error) {
+      console.error("Delete failed:", error);
+      // Reload to restore card if delete failed
+      const { data: fresh } = await supabase.from("cards").select("id, data").eq("id", id).single();
+      if (fresh) setCards(prev => [...prev, { ...fresh.data, id: fresh.id }]);
+    }
   };
 
   const handleSignOut = () => supabase.auth.signOut();
@@ -1127,6 +1149,24 @@ export default function CardIQ() {
       <div style={{ color: "#555", fontSize: 14 }}>Loading your cards…</div>
     </div>
   );
+
+  // Show DB setup error banner if Supabase tables are missing / access denied
+  const dbErrorBanner = dbError ? (
+    <div style={{ background: "#2a0a00", border: "1px solid #e94560", borderRadius: 14, padding: "14px 18px", margin: "16px 0", fontSize: 13 }}>
+      <div style={{ color: "#e94560", fontWeight: 700, marginBottom: 6 }}>⚠️ Database Error — {dbError.code}</div>
+      <div style={{ color: "#f87171", marginBottom: 10 }}>{dbError.message}</div>
+      {(dbError.code === "42P01" || dbError.message?.includes("does not exist")) && (
+        <div style={{ color: "#aaa", fontSize: 12 }}>
+          The database tables don't exist yet. Go to{" "}
+          <a href="https://supabase.com/dashboard" target="_blank" rel="noreferrer" style={{ color: "#4286f4" }}>Supabase Dashboard</a>
+          {" → SQL Editor"} and run the <code style={{ color: "#34e89e", background: "#0d2a1a", padding: "1px 5px", borderRadius: 4 }}>supabase/schema.sql</code> file.
+        </div>
+      )}
+      {dbError.code === "42501" || (dbError.message?.includes("permission") || dbError.message?.includes("policy")) ? (
+        <div style={{ color: "#aaa", fontSize: 12 }}>RLS policy issue — check the schema.sql policies are applied in Supabase → Authentication → Policies.</div>
+      ) : null}
+    </div>
+  ) : null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100dvh", background: "#0a0a0a", color: "#fff", fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif", position: "relative", overflow: "hidden" }}>
@@ -1184,6 +1224,7 @@ export default function CardIQ() {
           )}
 
           <div style={{ padding: isDesktop ? "16px 32px 32px" : "8px 16px 88px" }}>
+            {dbErrorBanner}
             <AlertBanner cards={cards} />
 
             <div style={{ opacity: animIn ? 1 : 0, transform: animIn ? "translateY(0)" : "translateY(10px)", transition: "all 0.3s ease" }}>
