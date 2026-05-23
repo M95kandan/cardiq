@@ -116,10 +116,13 @@ export function parseBillingSummary(lines) {
   const date = (m) => m ? normalizeDate(m[1].trim().replace(/,/g, "")) : null;
 
   // Total Amount Due
-  // HDFC: "= C 10,104.00"  |  ICICI: "= + + - `22,260.00"  |  SBI/Axis: follows label
+  // Try label-based first (most reliable), then fall back to formula `=` pattern (ICICI)
+  // HDFC: "TOTAL AMOUNT DUE = C 10,104.00"
+  // ICICI: "= + + - `22,260.00"
+  // SBI/Axis: "Total Amount Due ₹10,104.00"
   const totalDue = amt(
-    text.match(/=\s*[+\-\s]*[`C₹]?\s*([\d,]+\.\d{2})\b/) ||
-    text.match(/total\s+(?:amount|payment)\s+due[^`₹\d=]{0,15}[`₹C]?\s*([\d,]+\.\d{2})/i)
+    text.match(/total\s+(?:amount|payment)\s+due\s*[=:]?\s*[`C₹\s]{0,5}([\d,]+\.\d{2})/i) ||
+    text.match(/=\s*[+\-\s]*[`C₹]?\s*([\d,]+\.\d{2})\b/)
   );
 
   // Minimum Due
