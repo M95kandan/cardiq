@@ -1,74 +1,25 @@
 import { useState, useEffect, useRef } from "react";
 
-// ─── DATA ──────────────────────────────────────────────────────────────────────
-const initialCards = [
-  {
-    id: 1, name: "HDFC Regalia", bank: "HDFC", last4: "4821", network: "Visa",
-    color: ["#1a1a2e", "#16213e"], accent: "#e94560",
-    points: 12450, pointValue: 0.25, supportsQR: false,
-    offers: [
-      { id: 1, category: "Dining", discount: "20% off", partner: "Zomato", expiry: "Jun 30", icon: "🍽️" },
-      { id: 2, category: "Travel", discount: "5X points", partner: "MakeMyTrip", expiry: "Jul 15", icon: "✈️" },
-      { id: 3, category: "Fuel", discount: "1% surcharge waiver", partner: "All Fuel", expiry: "Dec 31", icon: "⛽" },
-    ],
-    rewardRate: { dining: 5, travel: 5, fuel: 2, shopping: 2, other: 1 },
-    limit: 500000, spent: 124500,
-    dueDate: "Jun 5", minDue: 6225, totalDue: 124500, billCycle: "25th",
-    alertThreshold: 80,
-  },
-  {
-    id: 2, name: "Axis Magnus", bank: "Axis", last4: "9234", network: "Mastercard",
-    color: ["#0f3443", "#34e89e"], accent: "#34e89e",
-    points: 8900, pointValue: 0.35, supportsQR: false,
-    offers: [
-      { id: 1, category: "Shopping", discount: "10% off", partner: "Amazon", expiry: "Jun 25", icon: "🛍️" },
-      { id: 2, category: "Entertainment", discount: "Buy 1 Get 1", partner: "BookMyShow", expiry: "Jul 31", icon: "🎬" },
-    ],
-    rewardRate: { dining: 2, travel: 12, fuel: 1, shopping: 5, other: 2 },
-    limit: 800000, spent: 310000,
-    dueDate: "Jun 8", minDue: 15500, totalDue: 310000, billCycle: "28th",
-    alertThreshold: 70,
-  },
-  {
-    id: 3, name: "SBI SimplyCLICK", bank: "SBI", last4: "5577", network: "Visa",
-    color: ["#373b44", "#4286f4"], accent: "#4286f4",
-    points: 3200, pointValue: 0.20, supportsQR: false,
-    offers: [
-      { id: 1, category: "Online Shopping", discount: "10X points", partner: "Flipkart", expiry: "Jun 30", icon: "📦" },
-      { id: 2, category: "Dining", discount: "5X points", partner: "Swiggy", expiry: "Jul 10", icon: "🛵" },
-    ],
-    rewardRate: { dining: 5, travel: 2, fuel: 1, shopping: 10, other: 1 },
-    limit: 200000, spent: 45000,
-    dueDate: "Jun 12", minDue: 2250, totalDue: 45000, billCycle: "1st",
-    alertThreshold: 75,
-  },
-  {
-    id: 4, name: "HDFC UPI RuPay", bank: "HDFC", last4: "3301", network: "RuPay",
-    color: ["#2d1b4e", "#6c3fc7"], accent: "#c084fc",
-    points: 5600, pointValue: 0.30, supportsQR: true, upiId: "mk@hdfcbank",
-    offers: [
-      { id: 1, category: "Groceries", discount: "5% cashback", partner: "BigBasket", expiry: "Jul 31", icon: "🛒" },
-      { id: 2, category: "Fuel", discount: "1.5% cashback", partner: "HPCL", expiry: "Dec 31", icon: "⛽" },
-      { id: 3, category: "Dining", discount: "10% off", partner: "Swiggy Instamart", expiry: "Jun 30", icon: "🍱" },
-    ],
-    rewardRate: { dining: 3, travel: 2, fuel: 3, shopping: 2, other: 2 },
-    limit: 300000, spent: 78000,
-    dueDate: "Jun 15", minDue: 3900, totalDue: 78000, billCycle: "5th",
-    alertThreshold: 60,
-  },
-];
+// ─── PERSISTENCE ──────────────────────────────────────────────────────────────
+function useLocalStorage(key, initial) {
+  const [val, setVal] = useState(() => {
+    try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : initial; }
+    catch { return initial; }
+  });
+  useEffect(() => { localStorage.setItem(key, JSON.stringify(val)); }, [key, val]);
+  return [val, setVal];
+}
 
-const initialTransactions = [
-  { id: 1, cardId: 1, merchant: "Zomato", category: "Dining", amount: 850, date: "May 22", points: 42, type: "card", icon: "🍽️" },
-  { id: 2, cardId: 4, merchant: "BigBasket", category: "Groceries", amount: 1200, date: "May 22", points: 24, type: "qr", icon: "🛒" },
-  { id: 3, cardId: 2, merchant: "Amazon", category: "Shopping", amount: 3499, date: "May 21", points: 174, type: "card", icon: "🛍️" },
-  { id: 4, cardId: 3, merchant: "Flipkart", category: "Online Shopping", amount: 1999, date: "May 21", points: 199, type: "card", icon: "📦" },
-  { id: 5, cardId: 1, merchant: "MakeMyTrip", category: "Travel", amount: 12500, date: "May 20", points: 625, type: "card", icon: "✈️" },
-  { id: 6, cardId: 4, merchant: "HPCL Petrol", category: "Fuel", amount: 2000, date: "May 19", points: 60, type: "qr", icon: "⛽" },
-  { id: 7, cardId: 2, merchant: "BookMyShow", category: "Entertainment", amount: 600, date: "May 18", points: 30, type: "card", icon: "🎬" },
-  { id: 8, cardId: 1, merchant: "Taj Mahal Bistro", category: "Dining", amount: 2400, date: "May 17", points: 120, type: "card", icon: "🍽️" },
-  { id: 9, cardId: 4, merchant: "Kirana Store", category: "Groceries", amount: 450, date: "May 16", points: 9, type: "qr", icon: "🛒" },
-  { id: 10, cardId: 3, merchant: "Swiggy", category: "Dining", amount: 380, date: "May 15", points: 19, type: "card", icon: "🛵" },
+// ─── COLOR PRESETS ────────────────────────────────────────────────────────────
+const COLOR_PRESETS = [
+  { name: "Crimson",  color: ["#1a1a2e","#16213e"], accent: "#e94560" },
+  { name: "Emerald",  color: ["#0f3443","#0d2137"], accent: "#34e89e" },
+  { name: "Sapphire", color: ["#373b44","#1e2a5e"], accent: "#4286f4" },
+  { name: "Violet",   color: ["#2d1b4e","#3d1b6e"], accent: "#c084fc" },
+  { name: "Rose",     color: ["#2a0a14","#5c1a2e"], accent: "#f43f5e" },
+  { name: "Jade",     color: ["#0a2a1a","#1a4a2e"], accent: "#4ade80" },
+  { name: "Amber",    color: ["#2a1a00","#5c3a00"], accent: "#f59e0b" },
+  { name: "Steel",    color: ["#1e2a3a","#2d3f55"], accent: "#60a5fa" },
 ];
 
 const categories = ["Dining", "Travel", "Fuel", "Shopping", "Entertainment", "Online Shopping", "Groceries", "Other"];
@@ -92,11 +43,14 @@ function getBestCard(category, amount, txnType = "card", cards) {
 }
 
 function getDaysUntil(dateStr) {
-  const months = { Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11 };
-  const [mon, day] = dateStr.split(" ");
-  const now = new Date(2026, 4, 23); // current date
-  const due = new Date(2026, months[mon], parseInt(day));
+  const due = new Date(dateStr);
+  const now = new Date(); now.setHours(0,0,0,0);
   return Math.ceil((due - now) / 86400000);
+}
+
+function fmtDate(dateStr) {
+  if (!dateStr) return "—";
+  return new Date(dateStr).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 }
 
 const tabs = ["Cards", "Smart Pay", "Bills", "Transactions", "Insights"];
@@ -254,12 +208,12 @@ function BillModal({ card, onClose }) {
         <div style={{textAlign:"center",marginBottom:16}}>
           <div style={{fontSize:12,color:"#666",letterSpacing:2,marginBottom:4}}>BILL DUE</div>
           <div style={{fontSize:26,fontWeight:900,color:"#fff"}}>{card.name}</div>
-          <div style={{fontSize:13,color:"#888",marginTop:2}}>•••• {card.last4} · Cycle closes {card.billCycle}</div>
+          <div style={{fontSize:13,color:"#888",marginTop:2}}>•••• {card.last4}{card.billCycle?` · Cycle closes ${card.billCycle}`:""}</div>
         </div>
         <div style={{display:"flex",gap:10,marginBottom:14}}>
           <div style={{flex:1,background:"#111",borderRadius:14,padding:"14px",border:"1px solid #1e1e1e",textAlign:"center"}}>
             <div style={{fontSize:10,color:"#555",letterSpacing:1}}>DUE DATE</div>
-            <div style={{fontSize:18,fontWeight:800,color:urgency,marginTop:4}}>{card.dueDate}</div>
+            <div style={{fontSize:18,fontWeight:800,color:urgency,marginTop:4}}>{fmtDate(card.dueDate)}</div>
             <div style={{fontSize:11,color:urgency,marginTop:2}}>{days <= 0 ? "OVERDUE" : `${days} days left`}</div>
           </div>
           <div style={{flex:1,background:"#111",borderRadius:14,padding:"14px",border:"1px solid #1e1e1e",textAlign:"center"}}>
@@ -374,10 +328,137 @@ const ST = {
   toggle:{padding:"10px",borderRadius:12,border:"1px solid",fontSize:12,cursor:"pointer"},
 };
 
+// ─── ADD / EDIT CARD MODAL ────────────────────────────────────────────────────
+function FormField({label,placeholder,value,onChange,type="text",children}) {
+  return (
+    <div style={{marginBottom:14}}>
+      <div style={ST.label}>{label}</div>
+      {children || <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={ST.input}/>}
+    </div>
+  );
+}
+
+function AddEditCardModal({card, onSave, onClose}) {
+  const isEdit = !!card;
+  const blank = {
+    name:"", bank:"", last4:"", network:"Visa",
+    color:COLOR_PRESETS[0].color, accent:COLOR_PRESETS[0].accent,
+    limit:"", spent:"", totalDue:"", minDue:"", dueDate:"", billCycle:"",
+    alertThreshold:75, points:"0", pointValue:"0.25",
+    rewardRate:{dining:2,travel:2,fuel:1,shopping:2,other:1},
+    supportsQR:false, upiId:"", offers:[],
+  };
+  const [f, setF] = useState(isEdit ? {
+    ...card,
+    limit:String(card.limit), spent:String(card.spent),
+    totalDue:String(card.totalDue), minDue:String(card.minDue),
+    points:String(card.points), pointValue:String(card.pointValue),
+  } : blank);
+
+  const set = (k,v) => setF(p=>({...p,[k]:v}));
+  const setRate = (k,v) => setF(p=>({...p,rewardRate:{...p.rewardRate,[k]:Number(v)||1}}));
+
+  const handleSave = () => {
+    if (!f.name.trim() || !f.last4 || !f.limit || !f.dueDate) return;
+    const spent = parseFloat(f.spent)||0;
+    const totalDue = parseFloat(f.totalDue)||spent;
+    onSave({
+      ...f,
+      id: card?.id || Date.now(),
+      limit: parseFloat(f.limit)||0,
+      spent, totalDue,
+      minDue: parseFloat(f.minDue) || Math.floor(totalDue*0.05),
+      alertThreshold: parseFloat(f.alertThreshold)||75,
+      points: parseFloat(f.points)||0,
+      pointValue: parseFloat(f.pointValue)||0.25,
+      offers: card?.offers || [],
+    });
+  };
+
+  return (
+    <div style={qrS.overlay}>
+      <div style={{...qrS.sheet,paddingBottom:50,maxHeight:"92vh",overflowY:"auto"}}>
+        <div style={qrS.handle}/>
+        <div style={{fontSize:18,fontWeight:800,color:"#fff",marginBottom:20}}>{isEdit?"Edit Card":"Add New Card"}</div>
+
+        {/* IDENTITY */}
+        <div style={{fontSize:10,fontWeight:800,color:"#4286f4",letterSpacing:2,marginBottom:12,paddingBottom:8,borderBottom:"1px solid #1e1e1e"}}>CARD IDENTITY</div>
+        <FormField label="CARD NAME" placeholder="e.g. HDFC Regalia" value={f.name} onChange={v=>set("name",v)}/>
+        <FormField label="BANK / ISSUER" placeholder="e.g. HDFC, Axis, SBI" value={f.bank} onChange={v=>set("bank",v)}/>
+        <FormField label="LAST 4 DIGITS" placeholder="1234" value={f.last4} onChange={v=>set("last4",v.slice(0,4))} type="number"/>
+        <FormField label="NETWORK">
+          <div style={{display:"flex",gap:8,marginBottom:0}}>
+            {["Visa","Mastercard","RuPay","Amex"].map(n=>(
+              <button key={n} onClick={()=>set("network",n)} style={{flex:1,padding:"8px 4px",borderRadius:10,border:`1px solid ${f.network===n?"#4286f4":"#2a2a2a"}`,background:f.network===n?"#0d1a33":"transparent",color:f.network===n?"#4286f4":"#555",fontSize:11,cursor:"pointer",fontWeight:f.network===n?700:400}}>{n}</button>
+            ))}
+          </div>
+        </FormField>
+        <FormField label="COLOR THEME">
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
+            {COLOR_PRESETS.map(p=>(
+              <button key={p.name} onClick={()=>{set("color",p.color);set("accent",p.accent);}} style={{height:38,borderRadius:10,border:`2px solid ${f.accent===p.accent?"#fff":"transparent"}`,background:`linear-gradient(135deg,${p.color[0]},${p.color[1]})`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:13}}>
+                {f.accent===p.accent?"✓":""}
+              </button>
+            ))}
+          </div>
+        </FormField>
+
+        {/* BILLING */}
+        <div style={{fontSize:10,fontWeight:800,color:"#f97316",letterSpacing:2,margin:"16px 0 12px",paddingBottom:8,borderBottom:"1px solid #1e1e1e"}}>CREDIT & BILLING</div>
+        <FormField label="CREDIT LIMIT (₹)" placeholder="500000" value={f.limit} onChange={v=>set("limit",v)} type="number"/>
+        <FormField label="CURRENT OUTSTANDING (₹)" placeholder="0" value={f.spent} onChange={v=>set("spent",v)} type="number"/>
+        <FormField label="TOTAL DUE (₹)" placeholder="Leave blank = same as outstanding" value={f.totalDue} onChange={v=>set("totalDue",v)} type="number"/>
+        <FormField label="MINIMUM DUE (₹)" placeholder="Auto = 5% of total due" value={f.minDue} onChange={v=>set("minDue",v)} type="number"/>
+        <FormField label="PAYMENT DUE DATE">
+          <input type="date" value={f.dueDate} onChange={e=>set("dueDate",e.target.value)} style={{...ST.input,colorScheme:"dark"}}/>
+        </FormField>
+        <FormField label="BILL CYCLE CLOSES" placeholder="e.g. 25th" value={f.billCycle} onChange={v=>set("billCycle",v)}/>
+        <FormField label={`SPEND ALERT AT ${f.alertThreshold}% UTILIZATION`}>
+          <input type="range" min={30} max={95} step={5} value={f.alertThreshold} onChange={e=>set("alertThreshold",Number(e.target.value))} style={{width:"100%",accentColor:"#f97316",marginTop:4}}/>
+        </FormField>
+
+        {/* REWARDS */}
+        <div style={{fontSize:10,fontWeight:800,color:"#34e89e",letterSpacing:2,margin:"16px 0 12px",paddingBottom:8,borderBottom:"1px solid #1e1e1e"}}>REWARD POINTS</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+          <div><div style={ST.label}>POINTS BALANCE</div><input type="number" value={f.points} onChange={e=>set("points",e.target.value)} placeholder="0" style={ST.input}/></div>
+          <div><div style={ST.label}>₹ PER POINT</div><input type="number" value={f.pointValue} onChange={e=>set("pointValue",e.target.value)} placeholder="0.25" step="0.05" style={ST.input}/></div>
+        </div>
+        <div style={ST.label}>REWARD RATES (X per ₹100)</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginBottom:14}}>
+          {["dining","travel","fuel","shopping","other"].map(cat=>(
+            <div key={cat} style={{textAlign:"center"}}>
+              <div style={{fontSize:9,color:"#555",textTransform:"uppercase",marginBottom:4}}>{cat}</div>
+              <input type="number" min={1} max={50} value={f.rewardRate[cat]} onChange={e=>setRate(cat,e.target.value)} style={{...ST.input,padding:"8px 6px",textAlign:"center"}}/>
+            </div>
+          ))}
+        </div>
+
+        {/* UPI */}
+        <div style={{fontSize:10,fontWeight:800,color:"#c084fc",letterSpacing:2,margin:"16px 0 12px",paddingBottom:8,borderBottom:"1px solid #1e1e1e"}}>UPI / QR</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#1a1a1a",borderRadius:12,padding:"12px 16px",marginBottom:14}}>
+          <div>
+            <div style={{fontWeight:600,fontSize:14}}>Supports UPI QR</div>
+            <div style={{fontSize:11,color:"#555",marginTop:2}}>RuPay credit cards only</div>
+          </div>
+          <button onClick={()=>set("supportsQR",!f.supportsQR)} style={{width:44,height:24,borderRadius:12,border:"none",cursor:"pointer",background:f.supportsQR?"#c084fc":"#333",position:"relative",transition:"background 0.2s"}}>
+            <div style={{position:"absolute",top:2,left:f.supportsQR?22:2,width:20,height:20,borderRadius:"50%",background:"#fff",transition:"left 0.2s"}}/>
+          </button>
+        </div>
+        {f.supportsQR && <FormField label="UPI ID" placeholder="yourname@hdfcbank" value={f.upiId} onChange={v=>set("upiId",v)}/>}
+
+        <button onClick={handleSave} style={{...qrS.btn,background:isEdit?"linear-gradient(90deg,#f97316,#e94560)":"linear-gradient(90deg,#4286f4,#34e89e)",marginTop:8}}>
+          {isEdit?"Save Changes ✓":"Add Card →"}
+        </button>
+        <button onClick={onClose} style={qrS.ghost}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function CardIQ() {
-  const [cards, setCards] = useState(initialCards);
-  const [txns, setTxns] = useState(initialTransactions);
+  const [cards, setCards] = useLocalStorage("cardiq-cards", []);
+  const [txns, setTxns] = useLocalStorage("cardiq-txns", []);
   const [activeTab, setActiveTab] = useState(0);
   const [selectedCard, setSelectedCard] = useState(null);
   const [category, setCategory] = useState("Dining");
@@ -388,6 +469,8 @@ export default function CardIQ() {
   const [qrCard, setQrCard] = useState(null);
   const [billCard, setBillCard] = useState(null);
   const [showAddTxn, setShowAddTxn] = useState(false);
+  const [showAddCard, setShowAddCard] = useState(false);
+  const [editCard, setEditCard] = useState(null);
 
   useEffect(() => {
     setAnimIn(false);
@@ -405,8 +488,8 @@ export default function CardIQ() {
   };
 
   const handleAddTxn = (txn) => {
-    const newId = Math.max(...txns.map(t=>t.id))+1;
-    const today = "May 23";
+    const newId = txns.length ? Math.max(...txns.map(t=>t.id))+1 : 1;
+    const today = new Date().toLocaleDateString("en-IN",{day:"numeric",month:"short"});
     setTxns(prev=>[{id:newId,...txn,date:today},...prev]);
     setCards(prev=>prev.map(c=> c.id===txn.cardId
       ? {...c, spent:c.spent+txn.amount, points:c.points+txn.points,
@@ -420,49 +503,71 @@ export default function CardIQ() {
     handleAddTxn({...txn, points:pts});
   };
 
+  const handleSaveCard = (card) => {
+    if (editCard) {
+      setCards(prev=>prev.map(c=>c.id===card.id?card:c));
+      setEditCard(null);
+    } else {
+      setCards(prev=>[...prev, card]);
+      setShowAddCard(false);
+    }
+  };
+
+  const handleDeleteCard = (id) => {
+    setCards(prev=>prev.filter(c=>c.id!==id));
+    setTxns(prev=>prev.filter(t=>t.cardId!==id));
+    setSelectedCard(null);
+  };
+
+  const now = new Date();
+  const hour = now.getHours();
+  const greet = hour<12?"Good morning":hour<17?"Good afternoon":"Good evening";
+
   return (
     <div style={S.phone}>
       <div style={S.notch}/>
       <div style={S.statusBar}>
-        <span style={S.time}>9:41</span>
+        <span style={S.time}>{now.getHours().toString().padStart(2,"0")}:{now.getMinutes().toString().padStart(2,"0")}</span>
         <div style={S.statusIcons}><span style={{fontSize:10,letterSpacing:1}}>●●●</span><span style={{fontSize:10}}>WiFi</span><span style={{fontSize:10}}>⬛</span></div>
       </div>
       <div style={S.header}>
         <div>
-          <div style={S.greet}>Good morning, MK 👋</div>
+          <div style={S.greet}>{greet} 👋</div>
           <div style={S.title}>CardIQ</div>
         </div>
         <div style={{display:"flex",gap:10,alignItems:"center"}}>
-          <button onClick={()=>setQrCard(cards.find(c=>c.supportsQR))} style={S.qrFab}>⬛</button>
+          {cards.find(c=>c.supportsQR) && <button onClick={()=>setQrCard(cards.find(c=>c.supportsQR))} style={S.qrFab}>⬛</button>}
           <div style={S.avatar}>MK</div>
         </div>
       </div>
 
       {/* Consolidated Credit Banner */}
-      <div style={S.banner}>
-        <div style={S.bannerRow}>
-          {[["Total Limit",`₹${(totalLimit/100000).toFixed(1)}L`,"#fff"],["Used",`₹${(totalSpent/1000).toFixed(0)}K`,"#e94560"],["Available",`₹${(totalAvailable/1000).toFixed(0)}K`,"#34e89e"]].map(([l,v,c],i)=>(
-            <div key={l} style={{flex:1,textAlign:"center"}}>
-              {i>0 && <div style={S.divider}/>}
-              <div style={{fontSize:16,fontWeight:800,color:c}}>{v}</div>
-              <div style={{fontSize:9,color:"#555",letterSpacing:1,marginTop:2}}>{l.toUpperCase()}</div>
-            </div>
-          ))}
+      {cards.length > 0 && (
+        <div style={S.banner}>
+          <div style={S.bannerRow}>
+            {[["Total Limit",`₹${(totalLimit/100000).toFixed(1)}L`,"#fff"],["Used",`₹${(totalSpent/1000).toFixed(0)}K`,"#e94560"],["Available",`₹${(totalAvailable/1000).toFixed(0)}K`,"#34e89e"]].map(([l,v,c],i)=>(
+              <div key={l} style={{flex:1,textAlign:"center"}}>
+                {i>0 && <div style={S.divider}/>}
+                <div style={{fontSize:16,fontWeight:800,color:c}}>{v}</div>
+                <div style={{fontSize:9,color:"#555",letterSpacing:1,marginTop:2}}>{l.toUpperCase()}</div>
+              </div>
+            ))}
+          </div>
+          <div style={S.masterBar}>
+            {cards.map(c=><div key={c.id} style={{width:`${(c.spent/totalLimit)*100}%`,height:"100%",background:c.accent,opacity:0.9}}/>)}
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",marginTop:4}}>
+            <span style={{fontSize:9,color:"#555"}}>{totalLimit>0?((totalSpent/totalLimit)*100).toFixed(0):0}% overall utilization</span>
+            <span style={{fontSize:9,color:"#555"}}>{cards.length} cards · {cards.filter(c=>c.supportsQR).length} RuPay QR</span>
+          </div>
         </div>
-        <div style={S.masterBar}>
-          {cards.map(c=><div key={c.id} style={{width:`${(c.spent/totalLimit)*100}%`,height:"100%",background:c.accent,opacity:0.9}}/>)}
-        </div>
-        <div style={{display:"flex",justifyContent:"space-between",marginTop:4}}>
-          <span style={{fontSize:9,color:"#555"}}>{((totalSpent/totalLimit)*100).toFixed(0)}% overall utilization</span>
-          <span style={{fontSize:9,color:"#555"}}>{cards.length} cards · {cards.filter(c=>c.supportsQR).length} RuPay QR</span>
-        </div>
-      </div>
+      )}
 
       <AlertBanner cards={cards}/>
 
       <div style={S.content} className="scroll-area">
         <div style={{opacity:animIn?1:0,transform:animIn?"translateY(0)":"translateY(12px)",transition:"all 0.35s ease"}}>
-          {activeTab===0 && <CardsTab cards={cards} onSelect={setSelectedCard} selected={selectedCard} onQRPay={setQrCard}/>}
+          {activeTab===0 && <CardsTab cards={cards} onSelect={setSelectedCard} selected={selectedCard} onQRPay={setQrCard} onAdd={()=>setShowAddCard(true)} onEdit={setEditCard} onDelete={handleDeleteCard}/>}
           {activeTab===1 && <SmartPayTab cards={cards} category={category} setCategory={setCategory} amount={amount} setAmount={setAmount} txnType={txnType} setTxnType={setTxnType} onAnalyze={handleAnalyze} recommendations={recommendations} onQRPay={setQrCard}/>}
           {activeTab===2 && <BillsTab cards={cards} onViewBill={setBillCard}/>}
           {activeTab===3 && <TransactionsTab txns={txns} cards={cards} onAdd={()=>setShowAddTxn(true)}/>}
@@ -484,6 +589,8 @@ export default function CardIQ() {
       {qrCard && <QRPayModal card={qrCard} onClose={()=>setQrCard(null)} onTransaction={handleQRTxn}/>}
       {billCard && <BillModal card={billCard} onClose={()=>setBillCard(null)}/>}
       {showAddTxn && <AddTxnModal cards={cards} onAdd={handleAddTxn} onClose={()=>setShowAddTxn(false)}/>}
+      {showAddCard && <AddEditCardModal onSave={handleSaveCard} onClose={()=>setShowAddCard(false)}/>}
+      {editCard && <AddEditCardModal card={editCard} onSave={handleSaveCard} onClose={()=>setEditCard(null)}/>}
 
       <style>{`
         .scroll-area::-webkit-scrollbar{display:none;}
@@ -496,9 +603,23 @@ export default function CardIQ() {
 }
 
 // ─── CARDS TAB ────────────────────────────────────────────────────────────────
-function CardsTab({cards,onSelect,selected,onQRPay}){
+function CardsTab({cards,onSelect,selected,onQRPay,onAdd,onEdit,onDelete}){
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  if (cards.length === 0) return (
+    <div style={{textAlign:"center",padding:"60px 20px"}}>
+      <div style={{fontSize:52,marginBottom:16}}>💳</div>
+      <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>No cards yet</div>
+      <div style={{fontSize:13,color:"#555",marginBottom:28}}>Add your credit cards to track spending, bills and rewards</div>
+      <button onClick={onAdd} style={{...qrS.btn,width:"auto",padding:"14px 32px",display:"inline-block"}}>+ Add Your First Card</button>
+    </div>
+  );
+
   return <div>
-    <div style={S.secLabel}>MY CARDS ({cards.length})</div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+      <div style={S.secLabel}>MY CARDS ({cards.length})</div>
+      <button onClick={onAdd} style={{background:"#0d1a33",border:"1px solid #4286f4",color:"#4286f4",borderRadius:12,padding:"5px 12px",fontSize:12,fontWeight:700,cursor:"pointer",marginBottom:10}}>+ Add</button>
+    </div>
     {cards.map((card,i)=>(
       <div key={card.id}>
         <div onClick={()=>onSelect(selected?.id===card.id?null:card)}
@@ -524,29 +645,26 @@ function CardsTab({cards,onSelect,selected,onQRPay}){
             <div style={{textAlign:"right"}}>
               <div style={{fontSize:10,color:"rgba(255,255,255,0.5)"}}>₹{(card.spent/1000).toFixed(0)}K / ₹{(card.limit/100000).toFixed(1)}L</div>
               <div style={{width:90,height:4,background:"rgba(255,255,255,0.15)",borderRadius:2,marginTop:4}}>
-                <div style={{width:`${(card.spent/card.limit)*100}%`,height:"100%",background:card.accent,borderRadius:2}}/>
+                <div style={{width:`${Math.min((card.spent/card.limit)*100,100)}%`,height:"100%",background:card.accent,borderRadius:2}}/>
               </div>
               <div style={{fontSize:10,color:"rgba(255,255,255,0.6)",marginTop:2}}>{((card.spent/card.limit)*100).toFixed(0)}% used</div>
             </div>
           </div>
-          {/* Due date pill */}
           <div style={{marginTop:10,display:"flex",gap:8,alignItems:"center"}}>
-            {(()=>{const d=getDaysUntil(card.dueDate);const c=d<=3?"#e94560":d<=7?"#f97316":"#34e89e";return(
-              <div style={{fontSize:10,color:c,background:`rgba(${d<=3?"233,69,96":d<=7?"249,115,22":"52,232,158"},0.12)`,padding:"3px 10px",borderRadius:10}}>
-                🗓 Due {card.dueDate} · {d<=0?"OVERDUE":`${d}d`}
+            {(()=>{const d=getDaysUntil(card.dueDate);const col=d<=3?"#e94560":d<=7?"#f97316":"#34e89e";return(
+              <div style={{fontSize:10,color:col,background:`rgba(${d<=3?"233,69,96":d<=7?"249,115,22":"52,232,158"},0.12)`,padding:"3px 10px",borderRadius:10}}>
+                🗓 Due {fmtDate(card.dueDate)} · {d<=0?"OVERDUE":`${d}d`}
               </div>
             );})()}
             {(card.spent/card.limit)*100>=card.alertThreshold && (
-              <div style={{fontSize:10,color:"#f97316",background:"rgba(249,115,22,0.1)",padding:"3px 10px",borderRadius:10}}>
-                ⚠️ High utilization
-              </div>
+              <div style={{fontSize:10,color:"#f97316",background:"rgba(249,115,22,0.1)",padding:"3px 10px",borderRadius:10}}>⚠️ High utilization</div>
             )}
           </div>
         </div>
         {selected?.id===card.id && (
           <div style={{...S.detailBox,borderColor:card.accent}}>
             <div style={S.secLabel}>REWARD RATES</div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:12}}>
               {Object.entries(card.rewardRate).map(([cat,rate])=>(
                 <div key={cat} style={{background:"#1a1a1a",borderRadius:10,padding:"8px 10px"}}>
                   <div style={{fontSize:10,color:"#aaa",textTransform:"capitalize"}}>{cat}</div>
@@ -554,10 +672,17 @@ function CardsTab({cards,onSelect,selected,onQRPay}){
                 </div>
               ))}
             </div>
-            {card.supportsQR && <div style={{marginTop:10,background:"#1a0533",borderRadius:10,padding:"10px 12px"}}>
+            {card.supportsQR && <div style={{marginBottom:12,background:"#1a0533",borderRadius:10,padding:"10px 12px"}}>
               <div style={{fontSize:10,color:"#888",letterSpacing:1}}>UPI ID</div>
               <div style={{fontSize:13,color:"#c084fc",fontWeight:700,marginTop:2}}>{card.upiId}</div>
             </div>}
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={e=>{e.stopPropagation();onEdit(card);}} style={{flex:1,padding:"9px",borderRadius:10,border:"1px solid #4286f4",background:"#0d1a33",color:"#4286f4",fontSize:12,fontWeight:700,cursor:"pointer"}}>✏️ Edit</button>
+              {confirmDelete===card.id
+                ? <button onClick={e=>{e.stopPropagation();onDelete(card.id);setConfirmDelete(null);}} style={{flex:1,padding:"9px",borderRadius:10,border:"1px solid #e94560",background:"#e94560",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}>Confirm Delete</button>
+                : <button onClick={e=>{e.stopPropagation();setConfirmDelete(card.id);}} style={{flex:1,padding:"9px",borderRadius:10,border:"1px solid #333",background:"transparent",color:"#555",fontSize:12,cursor:"pointer"}}>🗑 Delete</button>
+              }
+            </div>
           </div>
         )}
       </div>
@@ -568,6 +693,7 @@ function CardsTab({cards,onSelect,selected,onQRPay}){
 
 // ─── SMART PAY TAB ────────────────────────────────────────────────────────────
 function SmartPayTab({cards,category,setCategory,amount,setAmount,txnType,setTxnType,onAnalyze,recommendations,onQRPay}){
+  if (cards.length===0) return <div style={{textAlign:"center",padding:"60px 20px"}}><div style={{fontSize:40,marginBottom:12}}>🧠</div><div style={{fontSize:15,fontWeight:600,marginBottom:6}}>No cards to compare</div><div style={{fontSize:13,color:"#555"}}>Add cards to get smart payment recommendations</div></div>;
   return <div>
     <div style={S.secLabel}>SMART PURCHASE ADVISOR</div>
     <div style={{background:"#111",borderRadius:20,padding:"16px",marginBottom:14,border:"1px solid #1e1e1e"}}>
@@ -625,6 +751,7 @@ function SmartPayTab({cards,category,setCategory,amount,setAmount,txnType,setTxn
 
 // ─── BILLS TAB ────────────────────────────────────────────────────────────────
 function BillsTab({cards,onViewBill}){
+  if (cards.length===0) return <div style={{textAlign:"center",padding:"60px 20px"}}><div style={{fontSize:40,marginBottom:12}}>🗓️</div><div style={{fontSize:15,fontWeight:600,marginBottom:6}}>No cards added</div><div style={{fontSize:13,color:"#555"}}>Add cards from the Cards tab to track bills</div></div>;
   const sorted = [...cards].sort((a,b)=>getDaysUntil(a.dueDate)-getDaysUntil(b.dueDate));
   const totalDue = cards.reduce((s,c)=>s+c.totalDue,0);
   const totalMin = cards.reduce((s,c)=>s+c.minDue,0);
@@ -685,7 +812,7 @@ function BillsTab({cards,onViewBill}){
               </div>
             </div>
             <div style={{fontSize:11,fontWeight:700,color:urgency,whiteSpace:"nowrap"}}>
-              {days<=0?"OVERDUE!":days===1?"Due tomorrow":`Due in ${days}d`} · {card.dueDate}
+              {days<=0?"OVERDUE!":days===1?"Due tomorrow":`Due in ${days}d`} · {fmtDate(card.dueDate)}
             </div>
           </div>
 
@@ -767,6 +894,7 @@ function TransactionsTab({txns,cards,onAdd}){
 
 // ─── INSIGHTS TAB ─────────────────────────────────────────────────────────────
 function InsightsTab({cards,txns,totalLimit,totalSpent,totalAvailable}){
+  if (cards.length===0) return <div style={{textAlign:"center",padding:"60px 20px"}}><div style={{fontSize:40,marginBottom:12}}>📊</div><div style={{fontSize:15,fontWeight:600,marginBottom:6}}>No data yet</div><div style={{fontSize:13,color:"#555"}}>Add cards and transactions to see insights</div></div>;
   const totalPoints=cards.reduce((s,c)=>s+c.points,0);
   const totalValue=cards.reduce((s,c)=>s+c.points*c.pointValue,0);
 
