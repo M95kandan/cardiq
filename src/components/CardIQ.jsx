@@ -1,14 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-
-// ─── PERSISTENCE ──────────────────────────────────────────────────────────────
-function useLocalStorage(key, initial) {
-  const [val, setVal] = useState(() => {
-    try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : initial; }
-    catch { return initial; }
-  });
-  useEffect(() => { localStorage.setItem(key, JSON.stringify(val)); }, [key, val]);
-  return [val, setVal];
-}
+import { supabase } from "../lib/supabase";
 
 // ─── COLOR PRESETS ────────────────────────────────────────────────────────────
 const COLOR_PRESETS = [
@@ -36,7 +27,7 @@ function getBestCard(category, amount, txnType = "card", cards) {
       const rate = card.rewardRate[key] || 1;
       const pts = Math.floor((amount / 100) * rate);
       const value = pts * card.pointValue;
-      const offer = card.offers.find(o => o.category === category);
+      const offer = (card.offers||[]).find(o => o.category === category);
       return { card, rate, pts, value, offer };
     })
     .sort((a, b) => b.value - a.value);
@@ -457,8 +448,10 @@ function AddEditCardModal({card, onSave, onClose}) {
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function CardIQ() {
-  const [cards, setCards] = useLocalStorage("cardiq-cards", []);
-  const [txns, setTxns] = useLocalStorage("cardiq-txns", []);
+  const [cards, setCards]   = useState([]);
+  const [txns, setTxns]     = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [userId, setUserId] = useState(null);
   const [activeTab, setActiveTab] = useState(0);
   const [selectedCard, setSelectedCard] = useState(null);
   const [category, setCategory] = useState("Dining");
@@ -472,14 +465,33 @@ export default function CardIQ() {
   const [showAddCard, setShowAddCard] = useState(false);
   const [editCard, setEditCard] = useState(null);
 
+  // ── Load data from Supabase ──────────────────────────────────────────────
+  useEffect(() => {
+    const init = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      setUserId(user.id);
+
+      const [{ data: cardRows }, { data: txnRows }] = await Promise.all([
+        supabase.from("cards").select("id, data").eq("user_id", user.id).order("created_at"),
+        supabase.from("transactions").select("id, card_id, data").eq("user_id", user.id).order("created_at", { ascending: false }),
+      ]);
+
+      setCards((cardRows || []).map(r => ({ ...r.data, id: r.id })));
+      setTxns((txnRows  || []).map(r => ({ ...r.data, id: r.id, cardId: r.card_id })));
+      setLoading(false);
+    };
+    init();
+  }, []);
+
   useEffect(() => {
     setAnimIn(false);
     const t = setTimeout(() => setAnimIn(true), 50);
     return () => clearTimeout(t);
   }, [activeTab]);
 
-  const totalLimit = cards.reduce((s,c)=>s+c.limit,0);
-  const totalSpent = cards.reduce((s,c)=>s+c.spent,0);
+  const totalLimit     = cards.reduce((s,c)=>s+c.limit,0);
+  const totalSpent     = cards.reduce((s,c)=>s+c.spent,0);
   const totalAvailable = totalLimit - totalSpent;
 
   const handleAnalyze = () => {
@@ -487,41 +499,78 @@ export default function CardIQ() {
     setRecommendations(getBestCard(category, amt, txnType, cards));
   };
 
-  const handleAddTxn = (txn) => {
-    const newId = txns.length ? Math.max(...txns.map(t=>t.id))+1 : 1;
+  const handleAddTxn = async (txn) => {
     const today = new Date().toLocaleDateString("en-IN",{day:"numeric",month:"short"});
-    setTxns(prev=>[{id:newId,...txn,date:today},...prev]);
-    setCards(prev=>prev.map(c=> c.id===txn.cardId
-      ? {...c, spent:c.spent+txn.amount, points:c.points+txn.points,
-          totalDue:c.totalDue+txn.amount, minDue:Math.floor((c.totalDue+txn.amount)*0.05)}
-      : c
-    ));
+    // Optimistic card update
+    const updatedCard = cards.find(c=>c.id===txn.cardId);
+    if (updatedCard) {
+      const newCard = { ...updatedCard,
+        spent:    updatedCard.spent    + txn.amount,
+        points:   updatedCard.points   + txn.points,
+        totalDue: updatedCard.totalDue + txn.amount,
+        minDue:   Math.floor((updatedCard.totalDue + txn.amount) * 0.05),
+      };
+      setCards(prev => prev.map(c => c.id===txn.cardId ? newCard : c));
+      // Sync card to DB
+      const { id, ...cardData } = newCard;
+      supabase.from("cards").update({ data: cardData }).eq("id", id);
+    }
+    // Insert transaction
+    const { cardId, id: _id, ...txnData } = txn;
+    const { data: rows } = await supabase
+      .from("transactions")
+      .insert({ user_id: userId, card_id: cardId, data: { ...txnData, date: today } })
+      .select("id, card_id, data");
+    if (rows?.[0]) {
+      const r = rows[0];
+      setTxns(prev => [{ ...r.data, id: r.id, cardId: r.card_id }, ...prev]);
+    }
   };
 
   const handleQRTxn = (txn) => {
-    const pts = Math.floor(txn.amount/100*2);
-    handleAddTxn({...txn, points:pts});
+    handleAddTxn({ ...txn, points: Math.floor(txn.amount/100*2) });
   };
 
-  const handleSaveCard = (card) => {
+  const handleSaveCard = async (card) => {
+    const { id, ...data } = card;
     if (editCard) {
-      setCards(prev=>prev.map(c=>c.id===card.id?card:c));
+      // Edit: optimistic update then sync
+      setCards(prev => prev.map(c => c.id===id ? card : c));
       setEditCard(null);
+      supabase.from("cards").update({ data }).eq("id", id);
     } else {
-      setCards(prev=>[...prev, card]);
+      // Insert new card, get back Supabase UUID
+      const { data: rows } = await supabase
+        .from("cards")
+        .insert({ user_id: userId, data })
+        .select("id, data");
+      if (rows?.[0]) {
+        const r = rows[0];
+        setCards(prev => [...prev, { ...r.data, id: r.id }]);
+      }
       setShowAddCard(false);
     }
   };
 
   const handleDeleteCard = (id) => {
-    setCards(prev=>prev.filter(c=>c.id!==id));
-    setTxns(prev=>prev.filter(t=>t.cardId!==id));
+    setCards(prev => prev.filter(c => c.id!==id));
+    setTxns(prev  => prev.filter(t => t.cardId!==id));
     setSelectedCard(null);
+    supabase.from("cards").delete().eq("id", id);
   };
 
-  const now = new Date();
-  const hour = now.getHours();
+  const handleSignOut = () => supabase.auth.signOut();
+
+  const now   = new Date();
+  const hour  = now.getHours();
   const greet = hour<12?"Good morning":hour<17?"Good afternoon":"Good evening";
+
+  if (loading) return (
+    <div style={{...S.phone,alignItems:"center",justifyContent:"center",display:"flex",flexDirection:"column"}}>
+      <div style={{fontSize:40,marginBottom:16}}>💳</div>
+      <div style={{color:"#555",fontSize:14}}>Loading your cards…</div>
+    </div>
+  );
 
   return (
     <div style={S.phone}>
@@ -537,7 +586,7 @@ export default function CardIQ() {
         </div>
         <div style={{display:"flex",gap:10,alignItems:"center"}}>
           {cards.find(c=>c.supportsQR) && <button onClick={()=>setQrCard(cards.find(c=>c.supportsQR))} style={S.qrFab}>⬛</button>}
-          <div style={S.avatar}>MK</div>
+          <button onClick={handleSignOut} title="Sign out" style={{...S.avatar,background:"#1c1c1e",border:"1px solid #2a2a2a",fontSize:16,cursor:"pointer"}}>↩</button>
         </div>
       </div>
 
