@@ -11,7 +11,7 @@ html, body, #root {
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
-  background: #000;
+  background: #0a0a0a;
   color: #fff;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
@@ -19,6 +19,5 @@ body {
 
 #root {
   display: flex;
-  justify-content: center;
-  align-items: center;
+  flex-direction: column;
 }
