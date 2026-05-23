@@ -234,7 +234,7 @@ export function parseTransactions(lines) {
 
     // Skip summary/header/system rows and bare type-words
     if (/^(debit|credit)$/i.test(description)) continue;
-    if (/opening balance|closing balance|payment received|surcharge waiver|transactions for|minimum amount due|finance charge|late payment fee|emi interest|emi instalment|emi principal|goods.{0,5}service.{0,5}tax|\bgst\b|stpl emi|dial for cash|\btax\b|service charge|annual fee|joining fee|renewal fee|overlimit fee|cheque bounce|cash advance fee|processing fee|insurance premium/i.test(description)) continue;
+    if (/opening balance|closing balance|payment received|surcharge waiver|transactions for|minimum amount due|finance charge|late payment fee|emi interest|emi instalment|emi principal|goods.{0,5}service.{0,5}tax|\b[CSI]?GST\b|stpl emi|dial for cash|\btax\b|service charge|annual fee|joining fee|renewal fee|overlimit fee|cheque bounce|cash advance fee|processing fee|insurance premium|\bloan\b|loan repayment|loan instalment|loan emi|instaloan/i.test(description)) continue;
 
     const category = detectCategory(description);
     results.push({

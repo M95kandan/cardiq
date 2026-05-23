@@ -1622,7 +1622,7 @@ export default function CardIQ() {
   const handleImportStatement = async (cardId, selectedTxns, billing, saveBilling) => {
     setParsedStatement(null);
     const card = cards.find(c => c.id === cardId);
-    const noPointsPattern = /emi|gst|\btax\b|service charge|annual fee|joining fee|renewal fee|overlimit|cash advance|processing fee|insurance premium|finance charge/i;
+    const noPointsPattern = /emi|[csig]st|\btax\b|service charge|annual fee|joining fee|renewal fee|overlimit|cash advance|processing fee|insurance premium|finance charge|\bloan\b|instaloan/i;
     for (const txn of selectedTxns) {
       if (txn.type !== "debit") continue;
       const key    = categoryRewardKey[txn.category] || "other";
