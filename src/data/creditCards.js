@@ -80,6 +80,7 @@ export const CARD_DB = [
     accent: "#f97316",
     rewardRate: { dining: 10, travel: 1, fuel: 0, shopping: 5, other: 1 },
     pointValue: 1.0,
+    isCashback: true,
     annualFee: 500,
     supportsQR: false,
     benefits: [
@@ -102,6 +103,7 @@ export const CARD_DB = [
     accent: "#f59e0b",
     rewardRate: { dining: 4, travel: 5, fuel: 1, shopping: 7, other: 1 },
     pointValue: 1.0,
+    isCashback: true,
     annualFee: 500,
     supportsQR: false,
     benefits: [

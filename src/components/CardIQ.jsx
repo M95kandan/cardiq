@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 import { CARD_DB, searchCards } from "../data/creditCards";
+import { extractPDFLines, parseTransactions as parsePDFTxns, categoryIcon, parseBillingSummary, parseCardIdentity } from "../lib/statementParser";
 
 // ─── RESPONSIVE HOOK ──────────────────────────────────────────────────────────
 function useWindowWidth() {
@@ -77,34 +78,104 @@ const ST = {
 
 // ─── QR PAY MODAL ─────────────────────────────────────────────────────────────
 function QRPayModal({ card, onClose, onTransaction }) {
-  const [step, setStep] = useState("scan");
-  const [qrAmount] = useState("450");
-  const [merchant] = useState("Sharma Kirana Store");
+  const [step, setStep]       = useState("scan");   // scan | confirm | success
+  const [upiData, setUpiData] = useState(null);     // { pa, pn, am, tn }
+  const [camErr, setCamErr]   = useState(null);
+  const videoRef  = useRef(null);
   const canvasRef = useRef(null);
+  const streamRef = useRef(null);
+  const rafRef    = useRef(null);
 
+  // Start camera when modal opens
   useEffect(() => {
-    if (step === "scan" && canvasRef.current) {
-      const ctx = canvasRef.current.getContext("2d");
-      const size = 160; ctx.clearRect(0, 0, size, size);
-      ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, size, size);
-      ctx.fillStyle = "#1a0533";
-      const cell = 8, cols = size / cell;
-      for (let r = 0; r < cols; r++) for (let c = 0; c < cols; c++) {
-        const inCorner = (r < 5 && c < 5) || (r < 5 && c >= cols - 5) || (r >= cols - 5 && c < 5);
-        if (inCorner) { ctx.fillRect(c * cell, r * cell, cell, cell); continue; }
-        if ((r >= 1 && r <= 3 && c >= 1 && c <= 3) || (r >= 1 && r <= 3 && c >= cols - 4 && c <= cols - 2) || (r >= cols - 4 && r <= cols - 2 && c >= 1 && c <= 3)) {
-          ctx.fillStyle = "#fff"; ctx.fillRect(c * cell, r * cell, cell, cell); ctx.fillStyle = "#1a0533"; continue;
+    let stopped = false;
+    (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        if (stopped) { stream.getTracks().forEach(t => t.stop()); return; }
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play();
         }
-        const seed = (r * 31 + c * 17 + r * c) % 7;
-        if (seed < 3) ctx.fillRect(c * cell, r * cell, cell, cell);
+      } catch (e) {
+        setCamErr("Camera access denied. Allow camera in browser settings.");
       }
-      ctx.fillStyle = "rgba(192,132,252,0.9)"; ctx.beginPath(); ctx.roundRect(62, 62, 36, 36, 6); ctx.fill();
-      ctx.fillStyle = "#fff"; ctx.font = "bold 14px sans-serif"; ctx.textAlign = "center"; ctx.fillText("₹", 80, 85);
-    }
-  }, [step]);
+    })();
+    return () => {
+      stopped = true;
+      stopCamera();
+    };
+  }, []);
 
-  const handlePay = () => {
-    onTransaction({ cardId: card.id, merchant, category: "Groceries", amount: parseFloat(qrAmount), type: "qr", icon: "🛒" });
+  const stopCamera = () => {
+    cancelAnimationFrame(rafRef.current);
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
+  };
+
+  // Continuously scan video frames for QR codes
+  const scanFrame = useCallback(async () => {
+    const video  = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || video.readyState < 2) {
+      rafRef.current = requestAnimationFrame(scanFrame);
+      return;
+    }
+    canvas.width  = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(video, 0, 0);
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const jsQR = (await import("jsqr")).default;
+    const code = jsQR(img.data, img.width, img.height);
+    if (code) {
+      const raw = code.data;
+      // Parse UPI URI: upi://pay?pa=...&pn=...&am=...&tn=...
+      const parsed = parseUpiUri(raw);
+      if (parsed) {
+        stopCamera();
+        setUpiData(parsed);
+        setStep("confirm");
+        return;
+      }
+    }
+    rafRef.current = requestAnimationFrame(scanFrame);
+  }, []);
+
+  // Start scanning once video is playing
+  const handleVideoPlay = () => {
+    rafRef.current = requestAnimationFrame(scanFrame);
+  };
+
+  const parseUpiUri = (raw) => {
+    try {
+      const url = raw.startsWith("upi://") ? new URL(raw.replace("upi://", "https://upi/")) : new URL(raw);
+      const pa  = url.searchParams.get("pa");
+      if (!pa) return null;
+      return {
+        pa,
+        pn:  url.searchParams.get("pn") || pa.split("@")[0],
+        am:  parseFloat(url.searchParams.get("am")) || null,
+        tn:  url.searchParams.get("tn") || "",
+        raw,
+      };
+    } catch { return null; }
+  };
+
+  const handleOpenUpiApp = () => {
+    // Build UPI deep link — OS shows all installed UPI apps (GPay, PhonePe, Paytm, Navi…)
+    const link = new URL("upi://pay");
+    link.searchParams.set("pa", upiData.pa);
+    link.searchParams.set("pn", upiData.pn);
+    if (upiData.am) link.searchParams.set("am", upiData.am.toFixed(2));
+    link.searchParams.set("cu", "INR");
+    link.searchParams.set("tn", upiData.tn || "CardIQ Payment");
+    // Log the transaction in the app then redirect
+    if (upiData.am) {
+      onTransaction({ cardId: card.id, merchant: upiData.pn, category: "Other", amount: upiData.am, type: "qr", icon: "⬛" });
+    }
+    window.location.href = link.toString();
     setStep("success");
   };
 
@@ -112,27 +183,44 @@ function QRPayModal({ card, onClose, onTransaction }) {
     <div style={M.overlay}>
       <div style={M.sheet} onClick={e => e.stopPropagation()}>
         <div style={M.handle} />
+
         {step === "scan" && <>
           <div style={M.title}>Scan & Pay</div>
-          <div style={M.subtitle}>{card.name} · {card.upiId}</div>
+          <div style={M.subtitle}>{card.name} · {card.upiId || "UPI Credit Card"}</div>
           <div style={M.badge}><span style={{ color: card.accent, fontWeight: 800 }}>⬡ RuPay</span><span style={{ color: "#888", marginLeft: 8 }}>UPI Credit Card</span></div>
-          <div style={M.finder}>
-            {["tl", "tr", "bl", "br"].map(p => <div key={p} style={M.corner(p, card.accent)} />)}
-            <canvas ref={canvasRef} width={160} height={160} style={{ borderRadius: 8 }} />
+
+          {/* Live camera viewfinder */}
+          <div style={{ ...M.finder, overflow: "hidden", borderRadius: 16, background: "#000" }}>
+            {["tl", "tr", "bl", "br"].map(p => <div key={p} style={{ ...M.corner(p, card.accent), zIndex: 2 }} />)}
+            {camErr ? (
+              <div style={{ color: "#e94560", fontSize: 12, textAlign: "center", padding: 16 }}>{camErr}</div>
+            ) : (
+              <video ref={videoRef} onPlay={handleVideoPlay} muted playsInline
+                style={{ width: 160, height: 160, objectFit: "cover", borderRadius: 8 }} />
+            )}
+            <canvas ref={canvasRef} style={{ display: "none" }} />
             <div style={M.scanLine} className="qr-scan" />
           </div>
-          <div style={{ fontSize: 12, color: "#666", textAlign: "center", marginTop: 10 }}>Point camera at any UPI QR code</div>
-          <div style={M.note}>🇮🇳 RuPay Credit on UPI — works at all Bharat QR / UPI merchants</div>
-          <button onClick={() => setStep("confirm")} style={M.btn}>Simulate QR Scan →</button>
+
+          <div style={{ fontSize: 12, color: "#666", textAlign: "center", marginTop: 10 }}>
+            Point camera at any UPI / Bharat QR code
+          </div>
+          <div style={M.note}>🇮🇳 Your UPI apps (GPay, PhonePe, Navi…) will open automatically</div>
           <button onClick={onClose} style={M.ghost}>Cancel</button>
         </>}
-        {step === "confirm" && <>
-          <div style={M.title}>Confirm Payment</div>
+
+        {step === "confirm" && upiData && <>
+          <div style={M.title}>Open UPI App</div>
           <div style={M.mBox}>
             <div style={{ fontSize: 28, marginBottom: 6 }}>🏪</div>
-            <div style={{ color: "#fff", fontWeight: 700, fontSize: 16 }}>{merchant}</div>
-            <div style={{ color: "#888", fontSize: 12, marginTop: 4 }}>UPI · Bharat QR</div>
-            <div style={{ color: card.accent, fontWeight: 900, fontSize: 32, marginTop: 12 }}>₹{parseFloat(qrAmount).toLocaleString()}</div>
+            <div style={{ color: "#fff", fontWeight: 700, fontSize: 16 }}>{upiData.pn}</div>
+            <div style={{ color: "#888", fontSize: 12, marginTop: 4 }}>{upiData.pa}</div>
+            {upiData.am ? (
+              <div style={{ color: card.accent, fontWeight: 900, fontSize: 32, marginTop: 12 }}>₹{upiData.am.toLocaleString("en-IN")}</div>
+            ) : (
+              <div style={{ color: "#888", fontSize: 14, marginTop: 12 }}>Amount set in UPI app</div>
+            )}
+            {upiData.tn ? <div style={{ color: "#666", fontSize: 11, marginTop: 6 }}>{upiData.tn}</div> : null}
           </div>
           <div style={M.payWith}>
             <div style={{ fontSize: 10, color: "#666", letterSpacing: 2 }}>PAYING WITH</div>
@@ -142,20 +230,19 @@ function QRPayModal({ card, onClose, onTransaction }) {
                 <div style={{ color: "#fff", fontSize: 13, fontWeight: 600 }}>{card.name}</div>
                 <div style={{ color: "#666", fontSize: 10 }}>•••• {card.last4} · {card.upiId}</div>
               </div>
-              <div style={{ marginLeft: "auto", textAlign: "right" }}>
-                <div style={{ color: "#888", fontSize: 10 }}>Rewards</div>
-                <div style={{ color: card.accent, fontWeight: 700, fontSize: 12 }}>+{Math.floor(parseFloat(qrAmount) / 100 * 2)} pts</div>
-              </div>
             </div>
           </div>
-          <button onClick={handlePay} style={{ ...M.btn, background: "linear-gradient(90deg,#6c3fc7,#c084fc)" }}>Pay ₹{parseFloat(qrAmount).toLocaleString()} →</button>
-          <button onClick={() => setStep("scan")} style={M.ghost}>Back</button>
+          <button onClick={handleOpenUpiApp} style={{ ...M.btn, background: "linear-gradient(90deg,#6c3fc7,#c084fc)" }}>
+            Open GPay / PhonePe / Navi →
+          </button>
+          <button onClick={() => { setStep("scan"); streamRef.current === null && window.location.reload(); }} style={M.ghost}>Scan Again</button>
         </>}
+
         {step === "success" && <div style={{ textAlign: "center", paddingTop: 20 }}>
           <div style={M.ring}><div style={M.check}>✓</div></div>
-          <div style={{ color: "#fff", fontWeight: 800, fontSize: 20, marginTop: 20 }}>Payment Successful!</div>
-          <div style={{ color: "#888", fontSize: 13, marginTop: 6 }}>₹{parseFloat(qrAmount).toLocaleString()} paid to {merchant}</div>
-          <div style={{ ...M.note, marginTop: 16 }}>🎉 +{Math.floor(parseFloat(qrAmount) / 100 * 2)} reward points added</div>
+          <div style={{ color: "#fff", fontWeight: 800, fontSize: 20, marginTop: 20 }}>Redirected to UPI App</div>
+          <div style={{ color: "#888", fontSize: 13, marginTop: 6 }}>Complete payment in your UPI app</div>
+          <div style={{ ...M.note, marginTop: 16 }}>Transaction logged in CardIQ once you confirm</div>
           <button onClick={onClose} style={{ ...M.btn, marginTop: 24 }}>Done</button>
         </div>}
       </div>
@@ -623,7 +710,7 @@ function CardsTab({ cards, onSelect, selected, onQRPay, onAdd, onEdit, onDelete,
         <div style={S.secLabel}>MY CARDS ({cards.length})</div>
         <button onClick={onAdd} style={{ background: "#0d1a33", border: "1px solid #4286f4", color: "#4286f4", borderRadius: 12, padding: "6px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Add Card</button>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: isDesktop ? "repeat(2, 1fr)" : "1fr", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isDesktop ? "repeat(2, 1fr)" : "1fr", gap: 12, alignItems: "start" }}>
         {cards.map((card, i) => (
           <div key={card.id} style={{ minWidth: 0 }}>
             <div onClick={() => onSelect(selected?.id === card.id ? null : card)}
@@ -745,7 +832,11 @@ function SmartPayTab({ cards, category, setCategory, amount, setAmount, txnType,
               </div>
               <div style={{ textAlign: "right" }}>
                 <div style={{ color: card.accent, fontWeight: 800, fontSize: 16 }}>{rate}X</div>
-                <div style={{ fontSize: 11, color: "#aaa" }}>+{pts} pts (~₹{value.toFixed(0)})</div>
+                <div style={{ fontSize: 11, color: "#aaa" }}>
+                  {(card.pointValue || 0) >= 1
+                    ? `+₹${value.toFixed(0)} cashback`
+                    : `+${pts} pts (~₹${value.toFixed(0)})`}
+                </div>
               </div>
             </div>
             {offer && <div style={{ display: "flex", alignItems: "center", marginTop: 10, background: "rgba(52,232,158,0.06)", borderRadius: 8, padding: "6px 10px" }}>
@@ -760,16 +851,93 @@ function SmartPayTab({ cards, category, setCategory, amount, setAmount, txnType,
   );
 }
 
+// ─── MARK PAID MODAL ──────────────────────────────────────────────────────────
+function MarkPaidModal({ card, onConfirm, onClose }) {
+  const [mode, setMode]     = useState("full"); // "full" | "min" | "custom"
+  const [custom, setCustom] = useState("");
+
+  const amount = mode === "full" ? card.totalDue : mode === "min" ? card.minDue : parseFloat(custom) || 0;
+
+  return (
+    <div style={{ ...M.overlay, alignItems: "center", padding: "0 16px" }} onClick={onClose}>
+      <div style={{ ...M.sheet, borderRadius: 24, padding: 24, maxHeight: "85vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <div style={{ fontWeight: 800, fontSize: 16 }}>Mark as Paid</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#666", fontSize: 20, cursor: "pointer" }}>×</button>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20, padding: "12px 14px", background: "#0d0d0d", borderRadius: 14 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 10, background: `linear-gradient(135deg,${card.color[0]},${card.color[1]})`, flexShrink: 0 }} />
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 13 }}>{card.name}</div>
+            <div style={{ fontSize: 11, color: "#666" }}>···· {card.last4}</div>
+          </div>
+          <div style={{ marginLeft: "auto", textAlign: "right" }}>
+            <div style={{ fontSize: 11, color: "#555" }}>outstanding</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "#e94560" }}>₹{card.totalDue.toLocaleString("en-IN")}</div>
+          </div>
+        </div>
+
+        {/* Payment type selector */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          {[
+            { key: "full", label: "Full payment", value: card.totalDue, color: "#34e89e" },
+            { key: "min",  label: "Minimum due",  value: card.minDue,   color: "#f97316" },
+            { key: "custom", label: "Custom",     value: null,           color: "#4286f4" },
+          ].map(opt => (
+            <button key={opt.key} onClick={() => setMode(opt.key)} style={{
+              flex: 1, padding: "10px 6px", borderRadius: 12,
+              border: `1px solid ${mode === opt.key ? opt.color : "#2a2a2a"}`,
+              background: mode === opt.key ? `${opt.color}18` : "transparent",
+              color: mode === opt.key ? opt.color : "#555",
+              fontSize: 11, fontWeight: 700, cursor: "pointer", textAlign: "center",
+            }}>
+              <div>{opt.label}</div>
+              {opt.value != null && <div style={{ fontSize: 13, marginTop: 2 }}>₹{opt.value.toLocaleString("en-IN")}</div>}
+            </button>
+          ))}
+        </div>
+
+        {mode === "custom" && (
+          <input
+            type="number" placeholder="Enter amount paid" value={custom}
+            onChange={e => setCustom(e.target.value)}
+            style={{ ...ST.input, width: "100%", marginBottom: 16, boxSizing: "border-box" }}
+            autoFocus
+          />
+        )}
+
+        <button
+          onClick={() => amount > 0 && onConfirm(card.id, amount, mode)}
+          disabled={amount <= 0}
+          style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: amount > 0 ? "linear-gradient(90deg,#34e89e,#4286f4)" : "#1e1e1e", color: amount > 0 ? "#000" : "#444", fontWeight: 800, fontSize: 15, cursor: amount > 0 ? "pointer" : "not-allowed" }}>
+          ✓ Paid ₹{amount > 0 ? amount.toLocaleString("en-IN") : "—"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── BILLS TAB ────────────────────────────────────────────────────────────────
-function BillsTab({ cards, onViewBill }) {
+function BillsTab({ cards, onViewBill, onMarkPaid }) {
+  const [payingCard, setPayingCard] = useState(null);
+
   if (cards.length === 0) return <div style={{ textAlign: "center", padding: "80px 20px" }}><div style={{ fontSize: 48, marginBottom: 16 }}>🗓️</div><div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>No cards added</div><div style={{ fontSize: 14, color: "#555" }}>Add cards from the Cards tab to track bills</div></div>;
 
   const sorted = [...cards].sort((a, b) => getDaysUntil(a.dueDate) - getDaysUntil(b.dueDate));
-  const totalDue = cards.reduce((s, c) => s + c.totalDue, 0);
-  const totalMin = cards.reduce((s, c) => s + c.minDue, 0);
+  const totalDue = cards.reduce((s, c) => s + (c.totalDue || 0), 0);
+  const totalMin = cards.reduce((s, c) => s + (c.minDue || 0), 0);
 
   return (
     <div>
+      {payingCard && (
+        <MarkPaidModal
+          card={payingCard}
+          onConfirm={(id, amount, mode) => { onMarkPaid(id, amount, mode); setPayingCard(null); }}
+          onClose={() => setPayingCard(null)}
+        />
+      )}
+
       <div style={S.secLabel}>UPCOMING BILLS</div>
       <div style={{ background: "#111", borderRadius: 20, padding: "20px", marginBottom: 16, border: "1px solid #1e1e1e" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -797,12 +965,13 @@ function BillsTab({ cards, onViewBill }) {
       {sorted.map((card, i) => {
         const days = getDaysUntil(card.dueDate);
         const urgency = days <= 3 ? "#e94560" : days <= 7 ? "#f97316" : "#34e89e";
-        const pct = (card.spent / card.limit) * 100;
+        const pct = card.limit > 0 ? (card.spent / card.limit) * 100 : 0;
+        const isPaid = (card.totalDue || 0) === 0;
         return (
-          <div key={card.id} onClick={() => onViewBill(card)}
-            style={{ background: "#111", borderRadius: 16, padding: "16px", marginBottom: 10, border: `1px solid ${days <= 3 ? "#e94560" : days <= 7 ? "#f97316" : "#1e1e1e"}`, cursor: "pointer", animation: `slideUp 0.35s ease ${i * 80}ms both` }}>
+          <div key={card.id}
+            style={{ background: "#111", borderRadius: 16, padding: "16px", marginBottom: 10, border: `1px solid ${isPaid ? "#1e3a1e" : days <= 3 ? "#e94560" : days <= 7 ? "#f97316" : "#1e1e1e"}`, animation: `slideUp 0.35s ease ${i * 80}ms both` }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 12, alignItems: "center", cursor: "pointer" }} onClick={() => onViewBill(card)}>
                 <div style={{ width: 40, height: 40, borderRadius: 12, background: `linear-gradient(135deg,${card.color[0]},${card.color[1]})`, flexShrink: 0 }} />
                 <div>
                   <div style={{ fontWeight: 700, color: "#fff", fontSize: 14 }}>{card.name}</div>
@@ -810,22 +979,32 @@ function BillsTab({ cards, onViewBill }) {
                 </div>
               </div>
               <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 20, fontWeight: 800, color: "#e94560" }}>{fmtCurrency(card.totalDue)}</div>
-                <div style={{ fontSize: 10, color: "#666", marginTop: 2 }}>total due</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: isPaid ? "#34e89e" : "#e94560" }}>{isPaid ? "✓ Paid" : fmtCurrency(card.totalDue)}</div>
+                <div style={{ fontSize: 10, color: "#666", marginTop: 2 }}>{isPaid ? "cleared" : "total due"}</div>
               </div>
             </div>
+
             <div style={{ marginTop: 14, display: "flex", gap: 10, alignItems: "center" }}>
               <div style={{ flex: 1, height: 4, background: "#1e1e1e", borderRadius: 2 }}>
-                <div style={{ width: `${Math.max(0, Math.min(100, (14 - days) / 14 * 100))}%`, height: "100%", background: urgency, borderRadius: 2 }} />
+                <div style={{ width: `${Math.max(0, Math.min(100, (14 - days) / 14 * 100))}%`, height: "100%", background: isPaid ? "#34e89e" : urgency, borderRadius: 2 }} />
               </div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: urgency, whiteSpace: "nowrap" }}>
-                {days <= 0 ? "OVERDUE!" : days === 1 ? "Due tomorrow" : `Due in ${days}d`} · {fmtDate(card.dueDate)}
+              <div style={{ fontSize: 11, fontWeight: 700, color: isPaid ? "#34e89e" : urgency, whiteSpace: "nowrap" }}>
+                {isPaid ? "Bill cleared" : days <= 0 ? "OVERDUE!" : days === 1 ? "Due tomorrow" : `Due in ${days}d`} · {fmtDate(card.dueDate)}
               </div>
             </div>
-            <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div style={{ fontSize: 12, color: "#666" }}>Min due: <span style={{ color: "#f97316", fontWeight: 700 }}>₹{card.minDue.toLocaleString()}</span></div>
+
+            <div style={{ marginTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontSize: 12, color: "#666" }}>Min due: <span style={{ color: "#f97316", fontWeight: 700 }}>₹{(card.minDue || 0).toLocaleString()}</span></div>
               <div style={{ fontSize: 12, color: "#555" }}>Util: <span style={{ color: pct >= 80 ? "#e94560" : pct >= 60 ? "#f97316" : "#34e89e", fontWeight: 700 }}>{pct.toFixed(0)}%</span></div>
-              <div style={{ fontSize: 12, color: "#4286f4" }}>View details →</div>
+              {isPaid ? (
+                <div style={{ fontSize: 11, color: "#34e89e", fontWeight: 700 }}>✓ Cleared</div>
+              ) : (
+                <button
+                  onClick={e => { e.stopPropagation(); setPayingCard(card); }}
+                  style={{ fontSize: 11, fontWeight: 700, color: "#000", background: "linear-gradient(90deg,#34e89e,#4286f4)", border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>
+                  Mark Paid
+                </button>
+              )}
             </div>
           </div>
         );
@@ -834,8 +1013,214 @@ function BillsTab({ cards, onViewBill }) {
   );
 }
 
+// ─── PDF PASSWORD MODAL ───────────────────────────────────────────────────────
+function PDFPasswordModal({ isWrong, onSubmit, onClose }) {
+  const [pw, setPw] = useState("");
+  return (
+    <div style={M.overlay}>
+      <div style={M.sheet}>
+        <div style={M.handle} />
+        <div style={M.title}>🔒 PDF Password</div>
+        <div style={M.subtitle}>{isWrong ? "Incorrect password — try again" : "This PDF is password protected"}</div>
+        <input
+          autoFocus type="password" value={pw}
+          onChange={e => setPw(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && onSubmit(pw)}
+          placeholder="Enter PDF password"
+          style={{ ...ST.input, margin: "16px 0" }}
+        />
+        <button onClick={() => onSubmit(pw)} style={M.btn}>Unlock & Parse</button>
+        <button onClick={onClose} style={M.ghost}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── STATEMENT REVIEW MODAL ───────────────────────────────────────────────────
+function StatementReviewModal({ parsedTxns, rawLines, billing, identity, cards, onImport, onClose }) {
+  // Auto-match: try last4 first, then single card from same bank
+  const autoMatch = identity
+    ? (cards.find(c => identity.last4 && c.last4 === identity.last4) ||
+       (identity.bank && cards.filter(c => c.bank?.toLowerCase().includes(identity.bank.split(" ")[0].toLowerCase())).length === 1
+         ? cards.find(c => c.bank?.toLowerCase().includes(identity.bank.split(" ")[0].toLowerCase()))
+         : null))
+    : null;
+
+  const [cardId, setCardId]           = useState(autoMatch?.id ?? cards[0]?.id ?? "");
+  const [items, setItems]             = useState(parsedTxns);
+  const [saveBilling, setSaveBilling] = useState(!!(billing?.totalDue || billing?.dueDate));
+
+  const toggle    = (i) => setItems(p => p.map((t, j) => j === i ? { ...t, selected: !t.selected } : t));
+  const setCat    = (i, cat) => setItems(p => p.map((t, j) => j === i ? { ...t, category: cat, icon: categoryIcon(cat) } : t));
+  const selectAll = (v) => setItems(p => p.map(t => ({ ...t, selected: v })));
+
+  const selected   = items.filter(t => t.selected);
+  const totalDebit = selected.filter(t => t.type === "debit").reduce((s, t) => s + t.amount, 0);
+  const totalCredit = selected.filter(t => t.type === "credit").reduce((s, t) => s + t.amount, 0);
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#0a0a0a", zIndex: 600, display: "flex", flexDirection: "column", fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif" }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "16px 20px", borderBottom: "1px solid #1e1e1e", flexShrink: 0 }}>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: "#888", fontSize: 20, cursor: "pointer", lineHeight: 1 }}>←</button>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#fff" }}>Statement Import</div>
+          {identity?.bank || identity?.last4 ? (
+            <div style={{ fontSize: 12, marginTop: 2, display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ color: autoMatch ? "#34e89e" : "#f97316" }}>{autoMatch ? "✓" : "?"}</span>
+              <span style={{ color: "#aaa" }}>
+                {identity.bank ?? "Unknown Bank"}
+                {identity.last4 && !identity.last4.startsWith("X") ? ` •••• ${identity.last4}` : identity.last4 ? ` •••• ${identity.last4.slice(-4)}` : ""}
+              </span>
+              {autoMatch && <span style={{ color: "#555" }}>· auto-matched</span>}
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: "#555", marginTop: 2 }}>{items.length} transactions found · {selected.length} selected</div>
+          )}
+        </div>
+        <button
+          onClick={() => onImport(cardId, selected, billing, saveBilling)}
+          disabled={(!saveBilling && selected.length === 0) || !cardId}
+          style={{ background: "linear-gradient(90deg,#4286f4,#34e89e)", border: "none", color: "#000", borderRadius: 12, padding: "9px 18px", fontWeight: 800, fontSize: 13, cursor: (saveBilling || selected.length > 0) ? "pointer" : "not-allowed", opacity: (saveBilling || selected.length > 0) ? 1 : 0.4 }}>
+          {selected.length > 0 ? `Import ${selected.length}` : "Save Billing"}
+        </button>
+      </div>
+
+      {/* Card selector + summary */}
+      <div style={{ padding: "12px 20px", borderBottom: "1px solid #1e1e1e", flexShrink: 0, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8, overflowX: "auto", flex: 1 }}>
+          {cards.map(c => (
+            <button key={c.id} onClick={() => setCardId(c.id)} style={{ padding: "6px 14px", borderRadius: 20, border: `1px solid ${cardId === c.id ? c.accent : "#2a2a2a"}`, background: cardId === c.id ? "#111" : "transparent", color: cardId === c.id ? c.accent : "#666", fontSize: 12, cursor: "pointer", flexShrink: 0, fontWeight: cardId === c.id ? 700 : 400 }}>
+              {c.bank} {c.last4}
+            </button>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 16, flexShrink: 0 }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#e94560" }}>₹{totalDebit.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
+            <div style={{ fontSize: 9, color: "#555", marginTop: 2 }}>DEBITS</div>
+          </div>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#34e89e" }}>₹{totalCredit.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
+            <div style={{ fontSize: 9, color: "#555", marginTop: 2 }}>CREDITS</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Billing summary */}
+      {billing && (billing.totalDue > 0 || billing.dueDate) && (
+        <div style={{ padding: "12px 20px", borderBottom: "1px solid #1e1e1e", background: "#0d0d0d", flexShrink: 0 }}>
+          <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "flex-end" }}>
+            {billing.totalDue > 0 && <div><div style={{ fontSize: 9, color: "#555", letterSpacing: 1 }}>TOTAL DUE</div><div style={{ fontSize: 16, fontWeight: 800, color: "#e94560" }}>₹{billing.totalDue.toLocaleString("en-IN")}</div></div>}
+            {billing.minDue   > 0 && <div><div style={{ fontSize: 9, color: "#555", letterSpacing: 1 }}>MIN DUE</div><div style={{ fontSize: 16, fontWeight: 800, color: "#f97316" }}>₹{billing.minDue.toLocaleString("en-IN")}</div></div>}
+            {billing.dueDate       && <div><div style={{ fontSize: 9, color: "#555", letterSpacing: 1 }}>DUE DATE</div><div style={{ fontSize: 16, fontWeight: 800, color: "#34e89e" }}>{fmtDate(billing.dueDate)}</div></div>}
+            {billing.stmtDate      && <div><div style={{ fontSize: 9, color: "#555", letterSpacing: 1 }}>STMT DATE</div><div style={{ fontSize: 15, fontWeight: 700, color: "#aaa" }}>{fmtDate(billing.stmtDate)}</div></div>}
+            <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", marginLeft: "auto" }}>
+              <input type="checkbox" checked={saveBilling} onChange={e => setSaveBilling(e.target.checked)} style={{ accentColor: "#34e89e", width: 14, height: 14 }} />
+              <span style={{ fontSize: 11, color: "#aaa", whiteSpace: "nowrap" }}>Save to card</span>
+            </label>
+          </div>
+        </div>
+      )}
+
+      {/* Select all / deselect — only when there are transactions */}
+      {items.length > 0 && <div style={{ padding: "8px 20px", borderBottom: "1px solid #1e1e1e", display: "flex", gap: 12, flexShrink: 0 }}>
+        <button onClick={() => selectAll(true)}  style={{ fontSize: 12, background: "none", border: "none", color: "#4286f4", cursor: "pointer" }}>Select all</button>
+        <button onClick={() => selectAll(false)} style={{ fontSize: 12, background: "none", border: "none", color: "#555",   cursor: "pointer" }}>Deselect all</button>
+        <button onClick={() => selectAll(false) || setItems(p => p.map(t => ({ ...t, selected: t.type === "debit" })))}
+          style={{ fontSize: 12, background: "none", border: "none", color: "#555", cursor: "pointer" }}>Debits only</button>
+      </div>}
+
+      {/* Transaction list */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "8px 16px" }} className="scroll-area">
+        {items.length === 0 && (() => {
+          const joinedRaw = (rawLines || []).join(" ").toLowerCase();
+          const isLoanStmt = /payment advice.*loan|loan account|dial for cash|emi instalment|installment plan/i.test(joinedRaw);
+          return (
+            <div style={{ padding: "20px 0", color: "#555" }}>
+              <div style={{ textAlign: "center", marginBottom: 20 }}>
+                <div style={{ fontSize: 36, marginBottom: 8 }}>{isLoanStmt ? "🏦" : "🔍"}</div>
+                {isLoanStmt ? (
+                  <>
+                    <div style={{ color: "#f97316", fontWeight: 700, marginBottom: 6, fontSize: 14 }}>Loan Account Statement</div>
+                    <div style={{ fontSize: 12, color: "#888", lineHeight: 1.6, marginBottom: 18 }}>
+                      This is a <b style={{ color: "#fff" }}>loan repayment advice</b> (e.g. Dial for Cash / EMI),<br />
+                      not a credit card purchases statement.<br />
+                      No purchase transactions to import — but the billing summary<br />
+                      (Total Due, Min Due, Due Date) has been extracted above.
+                    </div>
+                    {billing && (billing.totalDue || billing.dueDate) && (
+                      <button
+                        onClick={() => onImport(cardId, [], billing, true)}
+                        disabled={!cardId}
+                        style={{ background: "linear-gradient(90deg,#4286f4,#34e89e)", border: "none", color: "#000", borderRadius: 14, padding: "12px 28px", fontWeight: 800, fontSize: 15, cursor: cardId ? "pointer" : "not-allowed", opacity: cardId ? 1 : 0.4 }}>
+                        💾 Save Billing to Card
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div style={{ color: "#aaa", fontWeight: 600, marginBottom: 6 }}>No transactions matched</div>
+                    <div style={{ fontSize: 12, color: "#666", lineHeight: 1.6 }}>
+                      Could not find transaction rows in this PDF.<br />
+                      Make sure you uploaded a credit card <b style={{ color: "#999" }}>purchases statement</b>,<br />
+                      not a payment receipt or account summary.
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+        {items.map((txn, i) => (
+          <div key={i} onClick={() => toggle(i)} style={{
+            display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
+            borderRadius: 12, marginBottom: 6, cursor: "pointer",
+            background: txn.selected ? "#111" : "transparent",
+            border: `1px solid ${txn.selected ? "#2a2a2a" : "transparent"}`,
+            opacity: txn.selected ? 1 : 0.45,
+          }}>
+            {/* Checkbox */}
+            <div style={{ width: 18, height: 18, borderRadius: 5, border: `2px solid ${txn.selected ? "#4286f4" : "#444"}`, background: txn.selected ? "#4286f4" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 11, color: "#fff" }}>
+              {txn.selected ? "✓" : ""}
+            </div>
+
+            {/* Icon */}
+            <div style={{ fontSize: 18, flexShrink: 0 }}>{txn.icon}</div>
+
+            {/* Description + date */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{txn.description}</div>
+              <div style={{ fontSize: 11, color: "#555", marginTop: 2 }}>{txn.date}</div>
+            </div>
+
+            {/* Category picker */}
+            <select
+              value={txn.category}
+              onClick={e => e.stopPropagation()}
+              onChange={e => { e.stopPropagation(); setCat(i, e.target.value); }}
+              style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", color: "#aaa", borderRadius: 8, padding: "4px 6px", fontSize: 11, cursor: "pointer", maxWidth: 120 }}>
+              {categories.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+
+            {/* Amount + type */}
+            <div style={{ textAlign: "right", flexShrink: 0 }}>
+              <div style={{ fontWeight: 700, color: txn.type === "credit" ? "#34e89e" : "#fff", fontSize: 13 }}>
+                {txn.type === "credit" ? "+" : "-"}₹{txn.amount.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+              </div>
+              <div style={{ fontSize: 10, color: txn.type === "credit" ? "#34e89e" : "#e94560", marginTop: 2, fontWeight: 700 }}>
+                {txn.type === "credit" ? "CREDIT" : "DEBIT"}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── TRANSACTIONS TAB ─────────────────────────────────────────────────────────
-function TransactionsTab({ txns, cards, onAdd }) {
+function TransactionsTab({ txns, cards, onAdd, onUploadStatement }) {
   const [filter, setFilter] = useState("all");
   const filtered = filter === "all" ? txns : filter === "qr" ? txns.filter(t => t.type === "qr") : txns.filter(t => t.cardId === filter);
   const totalSpent = filtered.reduce((s, t) => s + t.amount, 0);
@@ -843,9 +1228,12 @@ function TransactionsTab({ txns, cards, onAdd }) {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, marginTop: 4 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, marginTop: 4, gap: 8, flexWrap: "wrap" }}>
         <div style={S.secLabel}>TRANSACTIONS</div>
-        <button onClick={onAdd} style={{ background: "#0d1a33", border: "1px solid #4286f4", color: "#4286f4", borderRadius: 12, padding: "7px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Log</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={onUploadStatement} style={{ background: "#1a1a2e", border: "1px solid #c084fc", color: "#c084fc", borderRadius: 12, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>📄 Statement</button>
+          <button onClick={onAdd} style={{ background: "#0d1a33", border: "1px solid #4286f4", color: "#4286f4", borderRadius: 12, padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ Log</button>
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
@@ -1024,6 +1412,12 @@ export default function CardIQ() {
   const [qrCard, setQrCard]       = useState(null);
   const [billCard, setBillCard]   = useState(null);
   const [showAddTxn, setShowAddTxn] = useState(false);
+  const [parsedStatement, setParsedStatement] = useState(null);
+  const [statementParsing, setStatementParsing] = useState(false);
+  const [pendingPDFFile, setPendingPDFFile]   = useState(null);
+  const [pdfPasswordErr, setPdfPasswordErr]   = useState(null); // "PASSWORD_NEEDED" | "PASSWORD_WRONG"
+  const [rblAutoSaved, setRblAutoSaved]       = useState(null); // { bank, totalDue, minDue, dueDate }
+  const fileInputRef = useRef(null);
   const [showAddCard, setShowAddCard] = useState(false);
   const [editCard, setEditCard]   = useState(null);
 
@@ -1057,6 +1451,12 @@ export default function CardIQ() {
     const t = setTimeout(() => setAnimIn(true), 50);
     return () => clearTimeout(t);
   }, [activeTab]);
+
+  useEffect(() => {
+    if (!rblAutoSaved) return;
+    const t = setTimeout(() => setRblAutoSaved(null), 4000);
+    return () => clearTimeout(t);
+  }, [rblAutoSaved]);
 
   const totalLimit     = cards.reduce((s, c) => s + c.limit, 0);
   const totalSpent     = cards.reduce((s, c) => s + c.spent, 0);
@@ -1138,6 +1538,120 @@ export default function CardIQ() {
   };
 
   const handleSignOut = () => supabase.auth.signOut();
+
+  // ── Statement upload ───────────────────────────────────────────────────────
+  const processPDF = async (file, password) => {
+    const lines    = await extractPDFLines(file, password);
+    console.log("📄 PDF lines:", lines.length, lines.slice(0, 40));
+    const txns     = parsePDFTxns(lines);
+    const billing  = parseBillingSummary(lines);
+    const identity = parseCardIdentity(lines);
+    console.log("✅ Parsed:", txns.length, "txns | billing:", billing, "| identity:", identity);
+    setPendingPDFFile(null);
+    setPdfPasswordErr(null);
+
+    // RBL: auto-save billing without showing the modal
+    if (identity?.bank === "RBL Bank" && billing && (billing.totalDue > 0 || billing.dueDate)) {
+      const rblCard = cards.find(c => (c.last4 && identity.last4 && c.last4 === identity.last4 && c.bank === "RBL Bank") || c.bank === "RBL Bank");
+      if (rblCard) {
+        const updated = {
+          ...rblCard,
+          ...(billing.totalDue > 0 && { totalDue: billing.totalDue, spent: billing.totalDue }),
+          ...(billing.minDue   > 0 && { minDue: billing.minDue }),
+          ...(billing.dueDate       && { dueDate: billing.dueDate }),
+        };
+        setCards(prev => prev.map(c => c.id === rblCard.id ? updated : c));
+        await supabase.from("cards").update({ data: updated }).eq("id", rblCard.id);
+        setRblAutoSaved({ bank: "RBL Bank", totalDue: billing.totalDue, minDue: billing.minDue, dueDate: billing.dueDate });
+        return;
+      }
+    }
+
+    setParsedStatement({ txns, rawLines: lines, billing, identity });
+  };
+
+  const handleStatementFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setStatementParsing(true);
+    try {
+      await processPDF(file, undefined);
+    } catch (err) {
+      if (err.isPasswordError) {
+        setPendingPDFFile(file);
+        setPdfPasswordErr(err.message);
+      } else {
+        console.error("PDF parse error:", err);
+        alert("Could not parse this PDF. Make sure it's a text-based (not scanned) credit card statement.");
+      }
+    } finally {
+      setStatementParsing(false);
+    }
+  };
+
+  const handlePasswordSubmit = async (password) => {
+    const file = pendingPDFFile;
+    setPendingPDFFile(null);
+    setPdfPasswordErr(null);
+    setStatementParsing(true);
+    try {
+      await processPDF(file, password);
+    } catch (err) {
+      if (err.isPasswordError) {
+        setPendingPDFFile(file);
+        setPdfPasswordErr(err.message);
+      } else {
+        alert("Could not parse this PDF.");
+      }
+    } finally {
+      setStatementParsing(false);
+    }
+  };
+
+  const handleImportStatement = async (cardId, selectedTxns, billing, saveBilling) => {
+    setParsedStatement(null);
+    const card = cards.find(c => c.id === cardId);
+    for (const txn of selectedTxns) {
+      if (txn.type !== "debit") continue;
+      const key    = categoryRewardKey[txn.category] || "other";
+      const rate   = card?.rewardRate?.[key] || 1;
+      const isCb   = (card?.pointValue || 0) >= 1;
+      const points = isCb ? (txn.amount * rate / 100) : Math.floor((txn.amount / 100) * rate);
+      const { data: rows } = await supabase
+        .from("transactions")
+        .insert({ user_id: userId, card_id: cardId, data: { merchant: txn.description, category: txn.category, amount: txn.amount, type: "card", icon: txn.icon, points, date: txn.date } })
+        .select("id, card_id, data");
+      if (rows?.[0]) {
+        const r = rows[0];
+        setTxns(prev => [{ ...r.data, id: r.id, cardId: r.card_id }, ...prev]);
+      }
+    }
+    // Update card billing info if user opted in
+    if (saveBilling && billing && card) {
+      const updated = {
+        ...card,
+        ...(billing.totalDue > 0 && { totalDue: billing.totalDue, spent: billing.totalDue }),
+        ...(billing.minDue   > 0 && { minDue: billing.minDue }),
+        ...(billing.dueDate       && { dueDate: billing.dueDate }),
+      };
+      setCards(prev => prev.map(c => c.id === cardId ? updated : c));
+      await supabase.from("cards").update({ data: updated }).eq("id", cardId);
+    }
+  };
+
+  const handleMarkPaid = async (cardId, amountPaid, _mode) => {
+    const card = cards.find(c => c.id === cardId);
+    if (!card) return;
+    const remaining = Math.max(0, (card.totalDue || 0) - amountPaid);
+    const updated = {
+      ...card,
+      totalDue: remaining,
+      minDue:   remaining > 0 ? Math.min(card.minDue || 0, remaining) : 0,
+      spent:    Math.max(0, (card.spent || 0) - amountPaid),
+    };
+    setCards(prev => prev.map(c => c.id === cardId ? updated : c));
+    await supabase.from("cards").update({ data: updated }).eq("id", cardId);
+  };
 
   const now   = new Date();
   const hour  = now.getHours();
@@ -1230,8 +1744,8 @@ export default function CardIQ() {
             <div style={{ opacity: animIn ? 1 : 0, transform: animIn ? "translateY(0)" : "translateY(10px)", transition: "all 0.3s ease" }}>
               {activeTab === 0 && <CardsTab isDesktop={isDesktop} cards={cards} onSelect={setSelectedCard} selected={selectedCard} onQRPay={setQrCard} onAdd={() => setShowAddCard(true)} onEdit={setEditCard} onDelete={handleDeleteCard} />}
               {activeTab === 1 && <SmartPayTab cards={cards} category={category} setCategory={setCategory} amount={amount} setAmount={setAmount} txnType={txnType} setTxnType={setTxnType} onAnalyze={handleAnalyze} recommendations={recommendations} onQRPay={setQrCard} />}
-              {activeTab === 2 && <BillsTab cards={cards} onViewBill={setBillCard} />}
-              {activeTab === 3 && <TransactionsTab txns={txns} cards={cards} onAdd={() => setShowAddTxn(true)} />}
+              {activeTab === 2 && <BillsTab cards={cards} onViewBill={setBillCard} onMarkPaid={handleMarkPaid} />}
+              {activeTab === 3 && <TransactionsTab txns={txns} cards={cards} onAdd={() => setShowAddTxn(true)} onUploadStatement={() => fileInputRef.current?.click()} />}
               {activeTab === 4 && <InsightsTab cards={cards} txns={txns} totalLimit={totalLimit} totalSpent={totalSpent} totalAvailable={totalAvailable} />}
             </div>
           </div>
@@ -1253,12 +1767,49 @@ export default function CardIQ() {
         </div>
       )}
 
+      {/* ── HIDDEN FILE INPUT ────────────────────────────────────────────────── */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".pdf"
+        style={{ display: "none" }}
+        onChange={handleStatementFile}
+        onClick={e => { e.target.value = ""; }}
+      />
+
       {/* ── MODALS ──────────────────────────────────────────────────────────── */}
       {qrCard    && <QRPayModal card={qrCard} onClose={() => setQrCard(null)} onTransaction={handleQRTxn} />}
       {billCard  && <BillModal card={billCard} onClose={() => setBillCard(null)} />}
       {showAddTxn && cards.length > 0 && <AddTxnModal cards={cards} onAdd={handleAddTxn} onClose={() => setShowAddTxn(false)} />}
       {showAddCard && <AddEditCardModal onSave={handleSaveCard} onClose={() => setShowAddCard(false)} />}
       {editCard  && <AddEditCardModal card={editCard} onSave={handleSaveCard} onClose={() => setEditCard(null)} />}
+      {parsedStatement && <StatementReviewModal parsedTxns={parsedStatement.txns} rawLines={parsedStatement.rawLines} billing={parsedStatement.billing} identity={parsedStatement.identity} cards={cards} onImport={handleImportStatement} onClose={() => setParsedStatement(null)} />}
+      {pendingPDFFile && <PDFPasswordModal isWrong={pdfPasswordErr === "PASSWORD_WRONG"} onSubmit={handlePasswordSubmit} onClose={() => { setPendingPDFFile(null); setPdfPasswordErr(null); }} />}
+
+      {/* RBL auto-save success toast */}
+      {rblAutoSaved && (
+        <div onClick={() => setRblAutoSaved(null)} style={{ position: "fixed", bottom: 80, left: "50%", transform: "translateX(-50%)", background: "#111", border: "1px solid #2a2a2a", borderRadius: 16, padding: "14px 20px", zIndex: 700, display: "flex", alignItems: "center", gap: 12, cursor: "pointer", minWidth: 260, boxShadow: "0 8px 32px rgba(0,0,0,0.6)", animation: "slideUp 0.3s ease" }}>
+          <div style={{ fontSize: 28 }}>🏦</div>
+          <div>
+            <div style={{ color: "#34e89e", fontWeight: 700, fontSize: 13 }}>RBL Card Updated</div>
+            <div style={{ color: "#aaa", fontSize: 12, marginTop: 2 }}>
+              Due ₹{(rblAutoSaved.totalDue || 0).toLocaleString("en-IN")}
+              {rblAutoSaved.minDue > 0 && ` · Min ₹${rblAutoSaved.minDue.toLocaleString("en-IN")}`}
+              {rblAutoSaved.dueDate && ` · By ${new Date(rblAutoSaved.dueDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}`}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── STATEMENT PARSING OVERLAY ────────────────────────────────────────── */}
+      {statementParsing && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", backdropFilter: "blur(8px)", zIndex: 600, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
+          <div style={{ width: 56, height: 56, borderRadius: "50%", border: "3px solid #333", borderTopColor: "#c084fc", animation: "spin 0.8s linear infinite" }} />
+          <p style={{ color: "#fff", fontSize: 15, fontWeight: 600 }}>Reading statement…</p>
+          <p style={{ color: "#666", fontSize: 12 }}>Extracting transactions from PDF</p>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        </div>
+      )}
 
       <style>{`
         .scroll-area::-webkit-scrollbar { display: none; }
