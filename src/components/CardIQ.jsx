@@ -1622,12 +1622,15 @@ export default function CardIQ() {
   const handleImportStatement = async (cardId, selectedTxns, billing, saveBilling) => {
     setParsedStatement(null);
     const card = cards.find(c => c.id === cardId);
+    const noPointsPattern = /emi|gst|\btax\b|service charge|annual fee|joining fee|renewal fee|overlimit|cash advance|processing fee|insurance premium|finance charge/i;
     for (const txn of selectedTxns) {
       if (txn.type !== "debit") continue;
       const key    = categoryRewardKey[txn.category] || "other";
       const rate   = card?.rewardRate?.[key] || 1;
       const isCb   = (card?.pointValue || 0) >= 1;
-      const points = isCb ? (txn.amount * rate / 100) : Math.floor((txn.amount / 100) * rate);
+      const points = noPointsPattern.test(txn.description) ? 0
+        : isCb ? (txn.amount * rate / 100)
+        : Math.floor((txn.amount / 100) * rate);
       const { data: rows } = await supabase
         .from("transactions")
         .insert({ user_id: userId, card_id: cardId, data: { merchant: txn.description, category: txn.category, amount: txn.amount, type: "card", icon: txn.icon, points, date: txn.date } })
