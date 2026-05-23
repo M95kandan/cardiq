@@ -1439,7 +1439,18 @@ export default function CardIQ() {
         setDbError(cardErr);
       }
       if (txnErr) console.error("Txns load error:", txnErr);
-      setCards((cardRows || []).map(r => ({ ...r.data, id: r.id })));
+      setCards((cardRows || []).map(r => {
+        const stored = { ...r.data, id: r.id };
+        // Merge live CARD_DB fields (pointValue, isCashback, rewardRate) so DB records
+        // stay up-to-date even if the card was added before these fields existed.
+        const dbDef = CARD_DB.find(c => c.slug === stored.slug);
+        if (dbDef) {
+          stored.pointValue  = dbDef.pointValue;
+          stored.isCashback  = dbDef.isCashback ?? false;
+          stored.rewardRate  = dbDef.rewardRate;
+        }
+        return stored;
+      }));
       setTxns((txnRows  || []).map(r => ({ ...r.data, id: r.id, cardId: r.card_id })));
       setLoading(false);
     };
