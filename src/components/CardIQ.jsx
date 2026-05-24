@@ -726,7 +726,10 @@ function CardsTab({ cards, onSelect, selected, onQRPay, onAdd, onEdit, onDelete,
                   <div style={{ fontSize: 16, fontWeight: 700, color: "#fff", marginTop: 2 }}>{card.name}</div>
                 </div>
                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  {card.supportsQR && <button onClick={e => { e.stopPropagation(); onQRPay(card); }} style={{ background: "#1a0533", border: "1px solid #6c3fc7", color: "#c084fc", borderRadius: 12, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>⬛ QR</button>}
+                  {card.supportsQR && <button onClick={e => { e.stopPropagation(); onQRPay(card); }} style={{ background: "#1a0533", border: "1px solid #6c3fc7", color: "#c084fc", borderRadius: 12, padding: "3px 10px", fontSize: 10, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    <svg width="11" height="11" viewBox="0 0 20 20" fill="none"><rect x="2" y="2" width="7" height="7" rx="1.2" stroke="#c084fc" strokeWidth="2" fill="none"/><rect x="3.5" y="3.5" width="4" height="4" rx="0.5" fill="#c084fc"/><rect x="11" y="2" width="7" height="7" rx="1.2" stroke="#c084fc" strokeWidth="2" fill="none"/><rect x="12.5" y="3.5" width="4" height="4" rx="0.5" fill="#c084fc"/><rect x="2" y="11" width="7" height="7" rx="1.2" stroke="#c084fc" strokeWidth="2" fill="none"/><rect x="3.5" y="12.5" width="4" height="4" rx="0.5" fill="#c084fc"/><rect x="11" y="11" width="2.5" height="2.5" rx="0.5" fill="#c084fc"/><rect x="14.5" y="11" width="2.5" height="2.5" rx="0.5" fill="#c084fc"/><rect x="11" y="14.5" width="2.5" height="2.5" rx="0.5" fill="#c084fc"/><rect x="14.5" y="14.5" width="2.5" height="2.5" rx="0.5" fill="#c084fc"/></svg>
+                    QR
+                  </button>}
                   <div style={{ fontSize: 11, color: card.accent, background: "rgba(255,255,255,0.1)", padding: "4px 10px", borderRadius: 20, fontWeight: 700 }}>{card.network}</div>
                 </div>
               </div>
@@ -1705,10 +1708,36 @@ export default function CardIQ() {
           <div style={{ fontSize: 26 }}>💳</div>
           <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: -0.5 }}>CardIQ</div>
         </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {!isDesktop && <span style={{ fontSize: 13, color: "#555" }}>{greet}</span>}
           {cards.find(c => c.supportsQR) && !isDesktop && (
-            <button onClick={() => setQrCard(cards.find(c => c.supportsQR))} style={{ width: 36, height: 36, borderRadius: "50%", background: "linear-gradient(135deg,#2d1b4e,#6c3fc7)", border: "none", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>⬛</button>
+            <button onClick={() => setQrCard(cards.find(c => c.supportsQR))}
+              title="Scan & Pay"
+              style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#2d1b4e,#6c3fc7)", border: "1px solid #4a2a8a", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}>
+              {/* QR icon SVG */}
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <rect x="2" y="2" width="7" height="7" rx="1.2" stroke="#c084fc" strokeWidth="1.5" fill="none"/>
+                <rect x="3.5" y="3.5" width="4" height="4" rx="0.5" fill="#c084fc"/>
+                <rect x="11" y="2" width="7" height="7" rx="1.2" stroke="#c084fc" strokeWidth="1.5" fill="none"/>
+                <rect x="12.5" y="3.5" width="4" height="4" rx="0.5" fill="#c084fc"/>
+                <rect x="2" y="11" width="7" height="7" rx="1.2" stroke="#c084fc" strokeWidth="1.5" fill="none"/>
+                <rect x="3.5" y="12.5" width="4" height="4" rx="0.5" fill="#c084fc"/>
+                <rect x="11" y="11" width="2.5" height="2.5" rx="0.5" fill="#c084fc"/>
+                <rect x="14.5" y="11" width="2.5" height="2.5" rx="0.5" fill="#c084fc"/>
+                <rect x="11" y="14.5" width="2.5" height="2.5" rx="0.5" fill="#c084fc"/>
+                <rect x="14.5" y="14.5" width="2.5" height="2.5" rx="0.5" fill="#c084fc"/>
+              </svg>
+            </button>
+          )}
+          {!isDesktop && (
+            <button onClick={handleSignOut} title="Sign out"
+              style={{ width: 36, height: 36, borderRadius: 10, background: "#111", border: "1px solid #2a2a2a", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                <path d="M7 3H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3" stroke="#666" strokeWidth="1.5" strokeLinecap="round"/>
+                <path d="M12 6l3 3-3 3" stroke="#666" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M15 9H7" stroke="#666" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+            </button>
           )}
           {isDesktop && (
             <span style={{ fontSize: 13, color: "#555" }}>{greet} 👋</span>
