@@ -111,24 +111,58 @@ export function parseCardIdentity(lines) {
 
 // ── Extract billing summary (total due, min due, dates) ───────────────────────
 export function parseBillingSummary(lines) {
-  const text = lines.join(" ");
-  const amt  = (m) => m ? parseFloat(m[1].replace(/,/g, "")) : 0;
-  const date = (m) => m ? normalizeDate(m[1].trim().replace(/,/g, "")) : null;
+  const text   = lines.join(" ");
+  const toNum  = s => parseFloat(s.replace(/,/g, ""));
+  const amt    = (m) => m ? toNum(m[1]) : 0;
+  const date   = (m) => m ? normalizeDate(m[1].trim().replace(/,/g, "")) : null;
+  const allNums = s => [...s.matchAll(/([\d,]+\.\d{2})/g)].map(m => toNum(m[1]));
 
-  // Total Amount Due
-  // Try label-based first (most reliable), then fall back to formula `=` pattern (ICICI)
-  // HDFC: "TOTAL AMOUNT DUE = C 10,104.00"
-  // ICICI: "= + + - `22,260.00"
-  // SBI/Axis: "Total Amount Due ₹10,104.00"
-  const totalDue = amt(
-    text.match(/total\s+(?:amount|payment)\s+due\s*[=:]?\s*[`C₹\s]{0,5}([\d,]+\.\d{2})/i) ||
-    text.match(/=\s*[+\-\s]*[`C₹]?\s*([\d,]+\.\d{2})\b/)
-  );
+  // ── Total Amount Due ──────────────────────────────────────────────────────
+  // HDFC layout: header row has column labels (incl "TOTAL AMOUNT DUE") and
+  // the next row has values — graphical ±= operators aren't in PDF text.
+  // So we find the label line, then take the LAST number in the following row.
+  // SBI layout: "*Total Amount Due ( ₹ )" on one line, "16,174.00" on next.
+  // ICICI layout: "= + + - `22,260.00" formula in joined text.
+  let totalDue = 0;
 
-  // Minimum Due
-  const minDue = amt(
-    text.match(/min(?:imum)?\.?\s*(?:amount\s+|payment\s+|amt\.?\s*)?due[^`₹\d=]{0,50}[`₹C]?\s*([\d,]+\.\d{2})/i)
-  );
+  const totalDueLabelRe = /total\s+(?:amount|payment)\s+due/i;
+  for (let i = 0; i < lines.length && !totalDue; i++) {
+    if (!totalDueLabelRe.test(lines[i])) continue;
+    // Case A: value on the same line (Axis, some SBI) — take last number
+    const sameNums = allNums(lines[i]);
+    if (sameNums.length > 0) { totalDue = sameNums[sameNums.length - 1]; break; }
+    // Case B: value on next 1-3 lines (HDFC multi-col row, SBI standalone)
+    for (let j = i + 1; j <= Math.min(i + 3, lines.length - 1); j++) {
+      const nums = allNums(lines[j]);
+      if (nums.length === 0) continue;
+      // Multi-value row (HDFC formula): last number = total due
+      // Single-value row (SBI): that number = total due
+      totalDue = nums[nums.length - 1];
+      break;
+    }
+  }
+
+  // Fallback: ICICI "= + + - `22,260.00" formula pattern in joined text
+  if (!totalDue) {
+    const m = text.match(/=\s*[+\-\s]+[`C₹]?\s*([\d,]+\.\d{2})\b/);
+    if (m) totalDue = toNum(m[1]);
+  }
+
+  // ── Minimum Due ───────────────────────────────────────────────────────────
+  // Same multi-line issue: find label line, grab first number on same or next line
+  let minDue = 0;
+  const minDueLabelRe = /min(?:imum)?\.?\s*(?:amount\s+|payment\s+|amt\.?\s*)?due/i;
+  for (let i = 0; i < lines.length && !minDue; i++) {
+    if (!minDueLabelRe.test(lines[i])) continue;
+    const sameNums = allNums(lines[i]);
+    if (sameNums.length > 0) { minDue = sameNums[0]; break; }
+    for (let j = i + 1; j <= Math.min(i + 2, lines.length - 1); j++) {
+      const nums = allNums(lines[j]);
+      if (nums.length > 0) { minDue = nums[0]; break; }
+    }
+  }
+  // Fallback to joined text
+  if (!minDue) minDue = amt(text.match(/min(?:imum)?\.?\s*(?:amount\s+|payment\s+|amt\.?\s*)?due[^`₹\d=]{0,50}[`₹C]?\s*([\d,]+\.\d{2})/i));
 
   // Payment Due Date — DD Mon YYYY, Mon DD YYYY, DD/MM/YYYY
   const dueDate = date(
