@@ -4,7 +4,7 @@ import { supabase } from "../lib/supabase"
 // ─── LOADING SCREEN ──────────────────────────────────────────────────────────
 function Splash() {
   return (
-    <div style={S.screen}>
+    <div style={S.viewport}>
       <div style={{ textAlign: "center" }}>
         <div style={S.icon}>💳</div>
         <div style={S.appName}>CardIQ</div>
@@ -99,61 +99,68 @@ export default function AuthGate({ children }) {
   const btnLabel = { signin: "Sign In", signup: "Create Account", reset: "Send Reset Link" }
 
   return (
-    <div style={S.screen} onKeyDown={handleKeyDown}>
-      {/* Glow */}
-      <div style={S.glow} />
+    <div style={S.viewport} onKeyDown={handleKeyDown}>
+      <div style={S.screen}>
+        {/* Glow */}
+        <div style={S.glow} />
 
-      {/* Logo */}
-      <div style={{ textAlign: "center", marginBottom: 36 }}>
-        <div style={S.icon}>💳</div>
-        <div style={S.appName}>CardIQ</div>
-        <div style={{ fontSize: 14, color: "#fff", fontWeight: 600, marginTop: 16 }}>{titles[mode]}</div>
-        <div style={{ fontSize: 13, color: "#555", marginTop: 4 }}>{subs[mode]}</div>
-      </div>
+        {/* Logo */}
+        <div style={{ textAlign: "center", marginBottom: 36 }}>
+          <div style={S.icon}>💳</div>
+          <div style={S.appName}>CardIQ</div>
+          <div style={{ fontSize: 14, color: "#fff", fontWeight: 600, marginTop: 16 }}>{titles[mode]}</div>
+          <div style={{ fontSize: 13, color: "#555", marginTop: 4 }}>{subs[mode]}</div>
+        </div>
 
-      {/* Form */}
-      <div style={{ width: "100%" }}>
-        <Input label="EMAIL" type="email" value={email} onChange={v => { setEmail(v); clear() }} placeholder="you@example.com" autoFocus />
-        {mode !== "reset" && (
-          <Input label="PASSWORD" type="password" value={password} onChange={v => { setPassword(v); clear() }} placeholder="••••••••" />
-        )}
+        {/* Form */}
+        <div style={{ width: "100%" }}>
+          <Input label="EMAIL" type="email" value={email} onChange={v => { setEmail(v); clear() }} placeholder="you@example.com" autoFocus />
+          {mode !== "reset" && (
+            <Input label="PASSWORD" type="password" value={password} onChange={v => { setPassword(v); clear() }} placeholder="••••••••" />
+          )}
 
-        {error && <div style={{ color: "#e94560", fontSize: 13, marginBottom: 12, textAlign: "center" }}>{error}</div>}
-        {info  && <div style={{ color: "#34e89e", fontSize: 13, marginBottom: 12, textAlign: "center" }}>{info}</div>}
+          {error && <div style={{ color: "#e94560", fontSize: 13, marginBottom: 12, textAlign: "center" }}>{error}</div>}
+          {info  && <div style={{ color: "#34e89e", fontSize: 13, marginBottom: 12, textAlign: "center" }}>{info}</div>}
 
-        <button onClick={handleSubmit} disabled={loading} style={S.btn}>
-          {loading ? "…" : btnLabel[mode]}
-        </button>
-      </div>
+          <button onClick={handleSubmit} disabled={loading} style={S.btn}>
+            {loading ? "…" : btnLabel[mode]}
+          </button>
+        </div>
 
-      {/* Mode toggles */}
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, marginTop: 24 }}>
-        {mode === "signin" && <>
-          <button onClick={() => { setMode("signup"); clear() }} style={S.link}>Don't have an account? Sign up</button>
-          <button onClick={() => { setMode("reset"); clear() }}  style={{ ...S.link, color: "#444" }}>Forgot password?</button>
-        </>}
-        {mode === "signup" && (
-          <button onClick={() => { setMode("signin"); clear() }} style={S.link}>Already have an account? Sign in</button>
-        )}
-        {mode === "reset" && (
-          <button onClick={() => { setMode("signin"); clear() }} style={S.link}>Back to sign in</button>
-        )}
-      </div>
+        {/* Mode toggles */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, marginTop: 24 }}>
+          {mode === "signin" && <>
+            <button onClick={() => { setMode("signup"); clear() }} style={S.link}>Don't have an account? Sign up</button>
+            <button onClick={() => { setMode("reset"); clear() }}  style={{ ...S.link, color: "#444" }}>Forgot password?</button>
+          </>}
+          {mode === "signup" && (
+            <button onClick={() => { setMode("signin"); clear() }} style={S.link}>Already have an account? Sign in</button>
+          )}
+          {mode === "reset" && (
+            <button onClick={() => { setMode("signin"); clear() }} style={S.link}>Back to sign in</button>
+          )}
+        </div>
 
-      <div style={{ marginTop: 32, fontSize: 11, color: "#333", textAlign: "center" }}>
-        Your data is encrypted and stored securely
+        <div style={{ marginTop: 32, fontSize: 11, color: "#333", textAlign: "center" }}>
+          Your data is encrypted and stored securely
+        </div>
       </div>
     </div>
   )
 }
 
 const S = {
+  viewport: {
+    width: "100vw", minHeight: "100dvh",
+    background: "#0a0a0a",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif",
+  },
   screen: {
-    width: "100%", maxWidth: 390, height: "100dvh", maxHeight: 844,
-    background: "#0a0a0a", display: "flex", flexDirection: "column",
+    width: "100%", maxWidth: 390,
+    display: "flex", flexDirection: "column",
     alignItems: "center", justifyContent: "center",
     padding: "40px 28px", position: "relative", overflow: "hidden",
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif",
   },
   glow: {
     position: "absolute", top: -100, left: "50%", transform: "translateX(-50%)",
