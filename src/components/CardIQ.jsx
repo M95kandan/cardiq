@@ -32,8 +32,8 @@ const categoryRewardKey = {
   Entertainment: "shopping", "Online Shopping": "shopping", Groceries: "other", Other: "other",
 };
 
-const tabs = ["Cards", "Smart Pay", "Bills", "Transactions", "Insights"];
-const tabIcons = ["💳", "🧠", "🗓️", "📋", "📊"];
+const tabs = ["Cards", "Smart Pay", "Bills", "Transactions", "Insights", "Budget"];
+const tabIcons = ["💳", "🧠", "🗓️", "📋", "📊", "🎯"];
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 function getBestCard(category, amount, txnType = "card", cards) {
@@ -692,7 +692,7 @@ function SidebarNav({ activeTab, setActiveTab, cards, onSignOut }) {
 }
 
 // ─── CARDS TAB ────────────────────────────────────────────────────────────────
-function CardsTab({ cards, onSelect, selected, onQRPay, onAdd, onEdit, onDelete, isDesktop }) {
+function CardsTab({ cards, txns, onSelect, selected, onQRPay, onAdd, onEdit, onDelete, isDesktop }) {
   const [confirmDelete, setConfirmDelete] = useState(null);
 
   if (cards.length === 0) return (
@@ -734,26 +734,50 @@ function CardsTab({ cards, onSelect, selected, onQRPay, onAdd, onEdit, onDelete,
                 </div>
               </div>
               <div style={{ fontSize: 14, letterSpacing: 4, color: "rgba(255,255,255,0.75)", margin: "14px 0 10px", fontFamily: "monospace" }}>•••• •••• •••• {card.last4}</div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
-                <div>
-                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>POINTS</div>
-                  <div style={{ fontSize: 18, fontWeight: 800, color: card.accent }}>{(card.points || 0).toLocaleString()}</div>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>{fmtCurrency(card.spent)} / {fmtCurrency(card.limit)}</div>
-                  <div style={{ width: 90, height: 4, background: "rgba(255,255,255,0.15)", borderRadius: 2, marginTop: 4 }}>
-                    <div style={{ width: `${Math.min((card.spent / card.limit) * 100, 100)}%`, height: "100%", background: card.accent, borderRadius: 2 }} />
-                  </div>
-                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.6)", marginTop: 2 }}>{((card.spent / card.limit) * 100).toFixed(0)}% used</div>
-                </div>
-              </div>
-              <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center" }}>
-                {(() => { const d = getDaysUntil(card.dueDate); const col = d <= 3 ? "#e94560" : d <= 7 ? "#f97316" : "#34e89e"; return (
-                  <div style={{ fontSize: 10, color: col, background: `rgba(${d <= 3 ? "233,69,96" : d <= 7 ? "249,115,22" : "52,232,158"},0.12)`, padding: "3px 10px", borderRadius: 10 }}>
-                    🗓 Due {fmtDate(card.dueDate)} · {d <= 0 ? "OVERDUE" : `${d}d`}
-                  </div>
-                ); })()}
-              </div>
+
+              {/* Utilization row */}
+              {(() => {
+                const utilPct = card.limit > 0 ? Math.min((card.spent / card.limit) * 100, 100) : 0;
+                const unbilledAmt = txns.filter(t => t.cardId === card.id && (t.source === "sms" || t.source === "manual") && t.type !== "credit").reduce((s, t) => s + t.amount, 0);
+                const billedAmt = Math.max(0, card.totalDue - unbilledAmt);
+                return (
+                  <>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 6 }}>
+                      <div>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>POINTS</div>
+                        <div style={{ fontSize: 16, fontWeight: 800, color: card.accent }}>{(card.points || 0).toLocaleString()}</div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.9)" }}>{fmtCurrency(card.spent)} <span style={{ color: "rgba(255,255,255,0.4)", fontWeight: 400 }}>/ {fmtCurrency(card.limit)}</span></div>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>{utilPct.toFixed(0)}% utilisation</div>
+                      </div>
+                    </div>
+
+                    {/* Stacked utilization bar: billed (red) + unbilled (purple) */}
+                    <div style={{ height: 5, background: "rgba(255,255,255,0.12)", borderRadius: 3, overflow: "hidden", display: "flex", marginBottom: 6 }}>
+                      <div style={{ width: `${card.limit > 0 ? Math.min((billedAmt / card.limit) * 100, 100) : 0}%`, height: "100%", background: "#e94560", borderRadius: 3 }} />
+                      <div style={{ width: `${card.limit > 0 ? Math.min((unbilledAmt / card.limit) * 100, 100) : 0}%`, height: "100%", background: "#c084fc" }} />
+                    </div>
+
+                    {/* Billed / Unbilled / Due label row */}
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                      <div style={{ fontSize: 10, color: "rgba(233,69,96,0.85)" }}>
+                        <span style={{ display: "inline-block", width: 6, height: 6, background: "#e94560", borderRadius: 1, marginRight: 4, verticalAlign: "middle" }} />
+                        Billed {fmtCurrency(billedAmt)}
+                      </div>
+                      {unbilledAmt > 0 && (
+                        <div style={{ fontSize: 10, color: "rgba(192,132,252,0.9)" }}>
+                          <span style={{ display: "inline-block", width: 6, height: 6, background: "#c084fc", borderRadius: 1, marginRight: 4, verticalAlign: "middle" }} />
+                          Unbilled {fmtCurrency(unbilledAmt)}
+                        </div>
+                      )}
+                      {(() => { const d = getDaysUntil(card.dueDate); const col = d <= 3 ? "#e94560" : d <= 7 ? "#f97316" : "#34e89e"; return (
+                        <div style={{ marginLeft: "auto", fontSize: 10, color: col }}>🗓 Due {fmtDate(card.dueDate)}</div>
+                      ); })()}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
             {selected?.id === card.id && (
               <div style={{ borderRadius: "0 0 16px 16px", padding: "14px 16px", marginBottom: 4, background: "#111", border: `1px solid ${card.accent}44`, borderTop: "none" }}>
@@ -800,8 +824,25 @@ function SmartPayTab({ cards, category, setCategory, amount, setAmount, txnType,
 
         <div style={S.secLabel}>PAYMENT TYPE</div>
         <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-          {[["card", "💳 Card Swipe"], ["qr", "⬛ QR / UPI"]].map(([v, l]) => (
-            <button key={v} onClick={() => setTxnType(v)} style={{ ...ST.toggle, flex: 1, textAlign: "center", borderColor: txnType === v ? (v === "qr" ? "#c084fc" : "#4286f4") : "#2a2a2a", color: txnType === v ? (v === "qr" ? "#c084fc" : "#4286f4") : "#555", background: txnType === v ? (v === "qr" ? "#1a0533" : "#0d1a33") : "transparent" }}>{l}</button>
+          {[
+            ["card", <>💳 Card Swipe</>],
+            ["qr", <span style={{ display: "inline-flex", alignItems: "center", gap: 6, justifyContent: "center" }}>
+              <svg width="14" height="14" viewBox="0 0 20 20" fill="none">
+                <rect x="2" y="2" width="7" height="7" rx="1.2" stroke="currentColor" strokeWidth="2" fill="none"/>
+                <rect x="3.5" y="3.5" width="4" height="4" rx="0.5" fill="currentColor"/>
+                <rect x="11" y="2" width="7" height="7" rx="1.2" stroke="currentColor" strokeWidth="2" fill="none"/>
+                <rect x="12.5" y="3.5" width="4" height="4" rx="0.5" fill="currentColor"/>
+                <rect x="2" y="11" width="7" height="7" rx="1.2" stroke="currentColor" strokeWidth="2" fill="none"/>
+                <rect x="3.5" y="12.5" width="4" height="4" rx="0.5" fill="currentColor"/>
+                <rect x="11" y="11" width="2.5" height="2.5" rx="0.5" fill="currentColor"/>
+                <rect x="14.5" y="11" width="2.5" height="2.5" rx="0.5" fill="currentColor"/>
+                <rect x="11" y="14.5" width="2.5" height="2.5" rx="0.5" fill="currentColor"/>
+                <rect x="14.5" y="14.5" width="2.5" height="2.5" rx="0.5" fill="currentColor"/>
+              </svg>
+              QR / UPI
+            </span>],
+          ].map(([v, l]) => (
+            <button key={v} onClick={() => setTxnType(v)} style={{ ...ST.toggle, flex: 1, textAlign: "center", borderColor: txnType === v ? (v === "qr" ? "#c084fc" : "#4286f4") : "#2a2a2a", color: txnType === v ? (v === "qr" ? "#c084fc" : "#4286f4") : "#555", background: txnType === v ? (v === "qr" ? "#1a0533" : "#0d1a33") : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>{l}</button>
           ))}
         </div>
 
@@ -922,7 +963,7 @@ function MarkPaidModal({ card, onConfirm, onClose }) {
 }
 
 // ─── BILLS TAB ────────────────────────────────────────────────────────────────
-function BillsTab({ cards, onViewBill, onMarkPaid }) {
+function BillsTab({ cards, txns, onViewBill, onMarkPaid }) {
   const [payingCard, setPayingCard] = useState(null);
 
   if (cards.length === 0) return <div style={{ textAlign: "center", padding: "80px 20px" }}><div style={{ fontSize: 48, marginBottom: 16 }}>🗓️</div><div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>No cards added</div><div style={{ fontSize: 14, color: "#555" }}>Add cards from the Cards tab to track bills</div></div>;
@@ -930,6 +971,12 @@ function BillsTab({ cards, onViewBill, onMarkPaid }) {
   const sorted = [...cards].sort((a, b) => getDaysUntil(a.dueDate) - getDaysUntil(b.dueDate));
   const totalDue = cards.reduce((s, c) => s + (c.totalDue || 0), 0);
   const totalMin = cards.reduce((s, c) => s + (c.minDue || 0), 0);
+
+  // Unbilled = manually added (sms/manual) transactions per card
+  const getUnbilled = (card) => txns.filter(t =>
+    t.cardId === card.id && (t.source === "sms" || t.source === "manual") && t.type !== "credit"
+  );
+  const totalUpcoming = cards.reduce((s, c) => s + getUnbilled(c).reduce((a, t) => a + t.amount, 0), 0);
 
   return (
     <div>
@@ -962,6 +1009,12 @@ function BillsTab({ cards, onViewBill, onMarkPaid }) {
             <div style={{ fontSize: 10, color: "#f97316" }}>MINIMUM PAYMENT</div>
             <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginTop: 4 }}>{fmtCurrency(totalMin)}</div>
           </div>
+          {totalUpcoming > 0 && (
+            <div style={{ flex: 1, background: "rgba(196,132,252,0.08)", borderRadius: 12, padding: "10px 12px", textAlign: "center" }}>
+              <div style={{ fontSize: 10, color: "#c084fc" }}>UPCOMING</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginTop: 4 }}>{fmtCurrency(totalUpcoming)}</div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -970,6 +1023,8 @@ function BillsTab({ cards, onViewBill, onMarkPaid }) {
         const urgency = days <= 3 ? "#e94560" : days <= 7 ? "#f97316" : "#34e89e";
         const pct = card.limit > 0 ? (card.spent / card.limit) * 100 : 0;
         const isPaid = (card.totalDue || 0) === 0;
+        const unbilledTxns = getUnbilled(card);
+        const unbilledAmt  = unbilledTxns.reduce((s, t) => s + t.amount, 0);
         return (
           <div key={card.id}
             style={{ background: "#111", borderRadius: 16, padding: "16px", marginBottom: 10, border: `1px solid ${isPaid ? "#1e3a1e" : days <= 3 ? "#e94560" : days <= 7 ? "#f97316" : "#1e1e1e"}`, animation: `slideUp 0.35s ease ${i * 80}ms both` }}>
@@ -986,6 +1041,17 @@ function BillsTab({ cards, onViewBill, onMarkPaid }) {
                 <div style={{ fontSize: 10, color: "#666", marginTop: 2 }}>{isPaid ? "cleared" : "total due"}</div>
               </div>
             </div>
+
+            {/* Upcoming / unbilled transactions */}
+            {unbilledAmt > 0 && (
+              <div style={{ marginTop: 10, background: "rgba(196,132,252,0.07)", border: "1px solid #2a1a3a", borderRadius: 10, padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 10, color: "#c084fc", fontWeight: 700, letterSpacing: 0.5 }}>⏳ UPCOMING OUTSTANDING</div>
+                  <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>{unbilledTxns.length} txn{unbilledTxns.length !== 1 ? "s" : ""} not yet in statement</div>
+                </div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: "#c084fc" }}>{fmtCurrency(unbilledAmt)}</div>
+              </div>
+            )}
 
             <div style={{ marginTop: 14, display: "flex", gap: 10, alignItems: "center" }}>
               <div style={{ flex: 1, height: 4, background: "#1e1e1e", borderRadius: 2 }}>
@@ -1222,8 +1288,273 @@ function StatementReviewModal({ parsedTxns, rawLines, billing, identity, cards, 
   );
 }
 
+// ─── SMS TRANSACTION PARSER ───────────────────────────────────────────────────
+function parseBankSMS(raw) {
+  const amtM    = raw.match(/(?:Rs\.?|INR|₹)\s*([\d,]+(?:\.\d{1,2})?)/i);
+  const amount  = amtM ? parseFloat(amtM[1].replace(/,/g, "")) : null;
+  const cardM   = raw.match(/(?:XX|x{2,}|ending\s*(?:in\s*)?|card[^0-9]{0,10})(\d{4})\b/i);
+  const last4   = cardM ? cardM[1] : null;
+  const merchM  = raw.match(/(?:\bat\b|\bto\b)\s+([A-Z][A-Z0-9*&\s\-\.]{2,30?})(?=\s+on\b|\s+dated|\s+for\b|[.,]|$)/i);
+  const merchant = merchM ? merchM[1].trim() : null;
+  const isCredit = /credited|refund|cashback|reversed|reversal/i.test(raw);
+  const datePatterns = [/\b(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})\b/, /\b(\d{1,2}\s+[A-Za-z]{3}\s+\d{4})\b/, /\b([A-Za-z]{3}\s+\d{1,2},?\s+\d{4})\b/];
+  let date = null;
+  for (const p of datePatterns) { const m = raw.match(p); if (m) { date = m[1]; break; } }
+  return { amount, last4, merchant, type: isCredit ? "credit" : "debit", date };
+}
+
+function SMSParseModal({ cards, onAdd, onClose }) {
+  const [smsText, setSmsText]   = useState("");
+  const [parsed, setParsed]     = useState(null);
+  const [cardId, setCardId]     = useState(cards[0]?.id || "");
+  const [merchant, setMerchant] = useState("");
+  const [amount, setAmount]     = useState("");
+  const [date, setDate]         = useState(new Date().toISOString().slice(0, 10));
+  const [type, setType]         = useState("debit");
+  const [submitting, setSubmitting] = useState(false);
+
+  // Auto-parse whenever SMS text changes
+  useEffect(() => {
+    if (!smsText.trim()) { setParsed(null); return; }
+    const r = parseBankSMS(smsText);
+    setParsed(r.amount || r.merchant ? r : null);
+    if (r.amount)   setAmount(String(r.amount));
+    if (r.merchant) setMerchant(r.merchant);
+    if (r.type)     setType(r.type);
+    if (r.date)     setDate(r.date);
+    if (r.last4) {
+      const match = cards.find(c => c.last4 === r.last4);
+      if (match) setCardId(match.id);
+    }
+  }, [smsText]);
+
+  return (
+    <div style={M.overlay} onClick={onClose}>
+      <div style={{ ...M.sheet, paddingBottom: 40 }} onClick={e => e.stopPropagation()}>
+        <div style={M.handle} />
+        <div style={M.title}>Add from SMS / Alert</div>
+        <div style={M.subtitle}>Paste your bank transaction SMS — fields fill automatically</div>
+        <textarea
+          value={smsText} onChange={e => setSmsText(e.target.value)}
+          placeholder={"Example:\nYour HDFC Credit Card XX5870 used for Rs.450.00 at SWIGGY on 24-05-26."}
+          style={{ width: "100%", minHeight: 90, background: "#0d0d0d", border: `1px solid ${parsed ? "#34e89e44" : "#2a2a2a"}`, borderRadius: 12, color: "#aaa", fontSize: 13, padding: "12px", boxSizing: "border-box", resize: "none", fontFamily: "inherit", marginBottom: parsed ? 12 : 0 }}
+          autoFocus
+        />
+        {smsText.trim() && !parsed && (
+          <div style={{ fontSize: 11, color: "#666", textAlign: "center", padding: "8px 0 12px" }}>
+            Could not auto-detect fields — fill in manually below
+          </div>
+        )}
+
+        {(parsed || smsText.trim()) && <>
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 10, color: "#555", letterSpacing: 1, marginBottom: 4 }}>MERCHANT</div>
+              <input value={merchant} onChange={e => setMerchant(e.target.value)} style={{ ...ST.input, width: "100%", boxSizing: "border-box" }} placeholder="Merchant name" />
+            </div>
+            <div style={{ width: 110 }}>
+              <div style={{ fontSize: 10, color: "#555", letterSpacing: 1, marginBottom: 4 }}>AMOUNT (₹)</div>
+              <input type="number" value={amount} onChange={e => setAmount(e.target.value)} style={{ ...ST.input, width: "100%", boxSizing: "border-box" }} />
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 10, color: "#555", letterSpacing: 1, marginBottom: 4 }}>DATE</div>
+              <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{ ...ST.input, width: "100%", boxSizing: "border-box", colorScheme: "dark" }} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 10, color: "#555", letterSpacing: 1, marginBottom: 4 }}>TYPE</div>
+              <select value={type} onChange={e => setType(e.target.value)} style={{ ...ST.input, width: "100%", boxSizing: "border-box" }}>
+                <option value="debit">Debit</option>
+                <option value="credit">Credit</option>
+              </select>
+            </div>
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 10, color: "#555", letterSpacing: 1, marginBottom: 4 }}>CARD</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {cards.map(c => (
+                <button key={c.id} onClick={() => setCardId(c.id)} style={{ padding: "6px 12px", borderRadius: 20, border: `1px solid ${cardId === c.id ? c.accent : "#2a2a2a"}`, background: cardId === c.id ? "#111" : "transparent", color: cardId === c.id ? c.accent : "#555", fontSize: 11, cursor: "pointer", fontWeight: cardId === c.id ? 700 : 400 }}>
+                  {c.name} ···· {c.last4}
+                </button>
+              ))}
+            </div>
+          </div>
+          <button
+            onClick={async () => {
+              if (submitting || !merchant || !amount || !cardId) return;
+              setSubmitting(true);
+              await onAdd({ cardId, merchant, amount: parseFloat(amount), type, date, category: "Other", icon: "💳" });
+              setSubmitting(false);
+            }}
+            disabled={submitting || !merchant || !amount || !cardId}
+            style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", background: (merchant && amount && cardId && !submitting) ? "linear-gradient(90deg,#4286f4,#34e89e)" : "#1e1e1e", color: (merchant && amount && cardId && !submitting) ? "#000" : "#333", fontWeight: 800, fontSize: 15, cursor: (merchant && amount && cardId && !submitting) ? "pointer" : "not-allowed" }}>
+            {submitting ? "Adding…" : "Add Transaction"}
+          </button>
+        </>}
+      </div>
+    </div>
+  );
+}
+
+// ─── BUDGET TAB ───────────────────────────────────────────────────────────────
+function BudgetTab({ txns, cards }) {
+  const stored      = () => JSON.parse(localStorage.getItem("cardiq_budget") || "{}");
+  const [limit, setLimit]       = useState(stored().monthlyLimit || 0);
+  const [editing, setEditing]   = useState(!stored().monthlyLimit);
+  const [inputVal, setInputVal] = useState(String(stored().monthlyLimit || ""));
+
+  const save = () => {
+    const v = parseFloat(inputVal) || 0;
+    setLimit(v);
+    localStorage.setItem("cardiq_budget", JSON.stringify({ monthlyLimit: v }));
+    setEditing(false);
+  };
+
+  const now        = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+  const monthName  = now.toLocaleString("en-IN", { month: "long", year: "numeric" });
+  const thisMonth  = txns.filter(t => t.type !== "credit" && t.date >= monthStart);
+  const spent      = thisMonth.reduce((s, t) => s + (t.amount || 0), 0);
+  const pct        = limit > 0 ? Math.min((spent / limit) * 100, 100) : 0;
+  const remaining  = limit - spent;
+  const barColor   = pct >= 90 ? "#e94560" : pct >= 70 ? "#f97316" : "#34e89e";
+
+  const catSpend = {};
+  thisMonth.forEach(t => { catSpend[t.category] = (catSpend[t.category] || 0) + t.amount; });
+  const topCats = Object.entries(catSpend).sort((a, b) => b[1] - a[1]);
+
+  const catIcons = { Dining:"🍽️", Travel:"✈️", Fuel:"⛽", Shopping:"🛍️", Entertainment:"🎬", "Online Shopping":"📦", Groceries:"🛒", Other:"💳" };
+
+  return (
+    <div>
+      <div style={S.secLabel}>MONTHLY SPEND BUDGET</div>
+
+      {/* Limit setter */}
+      <div style={{ background: "#111", borderRadius: 20, padding: 20, marginBottom: 16, border: "1px solid #1e1e1e" }}>
+        {editing ? (
+          <>
+            <div style={{ fontSize: 13, color: "#888", marginBottom: 10 }}>Set your monthly spending limit across all cards</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input type="number" value={inputVal} onChange={e => setInputVal(e.target.value)} onKeyDown={e => e.key === "Enter" && save()}
+                placeholder="e.g. 50000" autoFocus
+                style={{ ...ST.input, flex: 1, fontSize: 20, fontWeight: 800 }} />
+              <button onClick={save} style={{ padding: "0 20px", borderRadius: 14, border: "none", background: "linear-gradient(90deg,#4286f4,#34e89e)", color: "#000", fontWeight: 800, fontSize: 14, cursor: "pointer" }}>Set</button>
+            </div>
+          </>
+        ) : (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div>
+              <div style={{ fontSize: 10, color: "#555", letterSpacing: 1 }}>MONTHLY LIMIT</div>
+              <div style={{ fontSize: 28, fontWeight: 900, color: "#fff", marginTop: 4 }}>{fmtCurrency(limit)}</div>
+              <div style={{ fontSize: 12, color: "#555", marginTop: 2 }}>{monthName}</div>
+            </div>
+            <button onClick={() => { setInputVal(String(limit)); setEditing(true); }}
+              style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", color: "#555", borderRadius: 10, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>Edit</button>
+          </div>
+        )}
+      </div>
+
+      {limit > 0 && (
+        <>
+          {/* Progress */}
+          <div style={{ background: "#111", borderRadius: 20, padding: 20, marginBottom: 16, border: `1px solid ${pct >= 90 ? "#e94560" : "#1e1e1e"}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+              <div>
+                <div style={{ fontSize: 10, color: "#555", letterSpacing: 1 }}>SPENT THIS MONTH</div>
+                <div style={{ fontSize: 24, fontWeight: 900, color: barColor, marginTop: 4 }}>{fmtCurrency(spent)}</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 10, color: "#555", letterSpacing: 1 }}>{remaining >= 0 ? "REMAINING" : "OVER BUDGET"}</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: remaining >= 0 ? "#34e89e" : "#e94560", marginTop: 4 }}>{fmtCurrency(Math.abs(remaining))}</div>
+              </div>
+            </div>
+            <div style={{ height: 10, background: "#1e1e1e", borderRadius: 5, overflow: "hidden" }}>
+              <div style={{ width: `${pct}%`, height: "100%", background: barColor, borderRadius: 5, transition: "width 0.6s ease" }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
+              <span style={{ fontSize: 11, color: "#555" }}>{fmtCurrency(spent)} / {fmtCurrency(limit)}</span>
+              <span style={{ fontSize: 11, color: barColor, fontWeight: 700 }}>{pct.toFixed(0)}%</span>
+            </div>
+            {pct >= 80 && (
+              <div style={{ marginTop: 12, background: pct >= 90 ? "rgba(233,69,96,0.1)" : "rgba(249,115,22,0.1)", borderRadius: 10, padding: "8px 12px", fontSize: 12, color: pct >= 90 ? "#e94560" : "#f97316", fontWeight: 600 }}>
+                {pct >= 90 ? "🚨 You've nearly hit your monthly limit!" : "⚠️ You're approaching your monthly limit"}
+              </div>
+            )}
+          </div>
+
+          {/* Per-card breakdown */}
+          <div style={S.secLabel}>SPEND BY CARD</div>
+          {cards.map(card => {
+            const cardSpent = thisMonth.filter(t => t.cardId === card.id).reduce((s, t) => s + t.amount, 0);
+            if (!cardSpent) return null;
+            const cp = limit > 0 ? (cardSpent / limit) * 100 : 0;
+            return (
+              <div key={card.id} style={{ background: "#111", borderRadius: 14, padding: "14px 16px", marginBottom: 8, border: "1px solid #1e1e1e" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                    <div style={{ width: 32, height: 20, borderRadius: 4, background: `linear-gradient(135deg,${card.color[0]},${card.color[1]})` }} />
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{card.name}</div>
+                  </div>
+                  <div style={{ fontWeight: 700, color: card.accent }}>{fmtCurrency(cardSpent)}</div>
+                </div>
+                <div style={{ height: 4, background: "#1e1e1e", borderRadius: 2 }}>
+                  <div style={{ width: `${Math.min(cp, 100)}%`, height: "100%", background: card.accent, borderRadius: 2 }} />
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+                  <span style={{ fontSize: 10, color: "#555" }}>{fmtCurrency(cardSpent)} / {fmtCurrency(limit)}</span>
+                  <span style={{ fontSize: 10, color: card.accent, fontWeight: 700 }}>{cp.toFixed(0)}%</span>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Per-category breakdown */}
+          {topCats.length > 0 && <>
+            <div style={S.secLabel}>SPEND BY CATEGORY</div>
+            {topCats.map(([cat, catAmt]) => {
+              const cp = limit > 0 ? (catAmt / limit) * 100 : 0;
+              return (
+                <div key={cat} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+                  <div style={{ fontSize: 20, flexShrink: 0 }}>{catIcons[cat] || "💳"}</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                      <span style={{ fontSize: 13, fontWeight: 600 }}>{cat}</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>{fmtCurrency(catAmt)}</span>
+                    </div>
+                    <div style={{ height: 4, background: "#1e1e1e", borderRadius: 2 }}>
+                      <div style={{ width: `${Math.min(cp, 100)}%`, height: "100%", background: "#4286f4", borderRadius: 2 }} />
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 3 }}>
+                      <span style={{ fontSize: 10, color: "#555" }}>{fmtCurrency(catAmt)} of {fmtCurrency(limit)}</span>
+                      <span style={{ fontSize: 10, color: "#4286f4", fontWeight: 700 }}>{cp.toFixed(0)}%</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </>}
+        </>
+      )}
+
+      {/* SMS / Unbilled section */}
+      <div style={S.secLabel}>UNBILLED TRANSACTIONS</div>
+      <div style={{ background: "#111", borderRadius: 16, padding: 16, border: "1px solid #1e1e1e" }}>
+        <div style={{ fontSize: 13, color: "#aaa", lineHeight: 1.6 }}>
+          Banks don't expose real-time APIs publicly. The fastest way to track unbilled spends is to <b style={{ color: "#fff" }}>paste the transaction SMS/alert</b> your bank sends for every purchase — go to <b style={{ color: "#4286f4" }}>Transactions → Add from SMS</b>.
+        </div>
+        <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {["HDFC", "ICICI", "SBI", "Axis", "RBL"].map(b => (
+            <span key={b} style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: 20, padding: "4px 12px", fontSize: 11, color: "#555" }}>✓ {b}</span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── TRANSACTIONS TAB ─────────────────────────────────────────────────────────
-function TransactionsTab({ txns, cards, onAdd, onUploadStatement }) {
+function TransactionsTab({ txns, cards, onAdd, onUploadStatement, onAddFromSMS }) {
   const [filter, setFilter] = useState("all");
   const filtered = filter === "all" ? txns : filter === "qr" ? txns.filter(t => t.type === "qr") : txns.filter(t => t.cardId === filter);
   const totalSpent = filtered.reduce((s, t) => s + t.amount, 0);
@@ -1235,6 +1566,7 @@ function TransactionsTab({ txns, cards, onAdd, onUploadStatement }) {
         <div style={S.secLabel}>TRANSACTIONS</div>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={onUploadStatement} style={{ background: "#1a1a2e", border: "1px solid #c084fc", color: "#c084fc", borderRadius: 12, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>📄 Statement</button>
+          <button onClick={onAddFromSMS} style={{ background: "#1a1a2e", border: "1px solid #34e89e", color: "#34e89e", borderRadius: 12, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>📱 SMS</button>
           <button onClick={onAdd} style={{ background: "#0d1a33", border: "1px solid #4286f4", color: "#4286f4", borderRadius: 12, padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ Log</button>
         </div>
       </div>
@@ -1420,9 +1752,11 @@ export default function CardIQ() {
   const [pendingPDFFile, setPendingPDFFile]   = useState(null);
   const [pdfPasswordErr, setPdfPasswordErr]   = useState(null); // "PASSWORD_NEEDED" | "PASSWORD_WRONG"
   const [rblAutoSaved, setRblAutoSaved]       = useState(null); // { bank, totalDue, minDue, dueDate }
+  const [reconcileResult, setReconcileResult] = useState(null); // { merged, added, card }
   const fileInputRef = useRef(null);
   const [showAddCard, setShowAddCard] = useState(false);
   const [editCard, setEditCard]   = useState(null);
+  const [showSMSModal, setShowSMSModal] = useState(false);
 
   const [dbError, setDbError] = useState(null);
 
@@ -1472,6 +1806,12 @@ export default function CardIQ() {
     return () => clearTimeout(t);
   }, [rblAutoSaved]);
 
+  useEffect(() => {
+    if (!reconcileResult) return;
+    const t = setTimeout(() => setReconcileResult(null), 5000);
+    return () => clearTimeout(t);
+  }, [reconcileResult]);
+
   const totalLimit     = cards.reduce((s, c) => s + c.limit, 0);
   const totalSpent     = cards.reduce((s, c) => s + c.spent, 0);
   const totalAvailable = totalLimit - totalSpent;
@@ -1499,7 +1839,7 @@ export default function CardIQ() {
     const { cardId, id: _id, ...txnData } = txn;
     const { data: rows } = await supabase
       .from("transactions")
-      .insert({ user_id: userId, card_id: cardId, data: { ...txnData, date: today } })
+      .insert({ user_id: userId, card_id: cardId, data: { ...txnData, date: today, source: "manual" } })
       .select("id, card_id, data");
     if (rows?.[0]) {
       const r = rows[0];
@@ -1573,6 +1913,7 @@ export default function CardIQ() {
           ...(billing.totalDue > 0 && { totalDue: billing.totalDue, spent: billing.totalDue }),
           ...(billing.minDue   > 0 && { minDue: billing.minDue }),
           ...(billing.dueDate       && { dueDate: billing.dueDate }),
+          ...(billing.stmtDate      && { stmtDate: billing.stmtDate }),
         };
         setCards(prev => prev.map(c => c.id === rblCard.id ? updated : c));
         await supabase.from("cards").update({ data: updated }).eq("id", rblCard.id);
@@ -1626,33 +1967,82 @@ export default function CardIQ() {
     setParsedStatement(null);
     const card = cards.find(c => c.id === cardId);
     const noPointsPattern = /emi|[csig]st|\btax\b|service charge|annual fee|joining fee|renewal fee|overlimit|cash advance|processing fee|insurance premium|finance charge|\bloan\b|instaloan/i;
+
+    // ── Deduplication: match SMS/manual entries against statement rows ──────────
+    // Unbilled txns currently in state for this card
+    const existingUnbilled = txns.filter(t =>
+      t.cardId === cardId && (t.source === "sms" || t.source === "manual") && t.type !== "credit"
+    );
+    const matchedIds = new Set(); // IDs of unbilled txns reconciled with this statement
+    let mergedCount = 0;
+    let addedCount  = 0;
+
     for (const txn of selectedTxns) {
       if (txn.type !== "debit") continue;
-      const key    = categoryRewardKey[txn.category] || "other";
-      const rate   = card?.rewardRate?.[key] || 1;
-      const isCb   = (card?.pointValue || 0) >= 1;
-      const points = noPointsPattern.test(txn.description) ? 0
-        : isCb ? (txn.amount * rate / 100)
-        : Math.floor((txn.amount / 100) * rate);
-      const { data: rows } = await supabase
-        .from("transactions")
-        .insert({ user_id: userId, card_id: cardId, data: { merchant: txn.description, category: txn.category, amount: txn.amount, type: "card", icon: txn.icon, points, date: txn.date } })
-        .select("id, card_id, data");
-      if (rows?.[0]) {
-        const r = rows[0];
-        setTxns(prev => [{ ...r.data, id: r.id, cardId: r.card_id }, ...prev]);
+
+      // Find an unmatched existing unbilled txn with the same amount (within ₹1 rounding)
+      const match = existingUnbilled.find(t =>
+        !matchedIds.has(t.id) && Math.abs(t.amount - txn.amount) < 1
+      );
+
+      if (match) {
+        // ── MERGE: upgrade existing unbilled txn to confirmed statement entry ──
+        matchedIds.add(match.id);
+        mergedCount++;
+        const key    = categoryRewardKey[txn.category] || "other";
+        const rate   = card?.rewardRate?.[key] || 1;
+        const isCb   = (card?.pointValue || 0) >= 1;
+        const points = noPointsPattern.test(txn.description) ? 0
+          : isCb ? Math.round(txn.amount * rate / 100)
+          : Math.floor((txn.amount / 100) * rate);
+        const merged = { ...match, merchant: txn.description || match.merchant, category: txn.category,
+          icon: txn.icon, points, date: txn.date, source: "statement" };
+        await supabase.from("transactions").update({ data: merged }).eq("id", match.id);
+        setTxns(prev => prev.map(t => t.id === match.id ? { ...merged, id: t.id, cardId: t.cardId } : t));
+      } else {
+        // ── NEW: insert as a fresh statement transaction ───────────────────────
+        addedCount++;
+        const key    = categoryRewardKey[txn.category] || "other";
+        const rate   = card?.rewardRate?.[key] || 1;
+        const isCb   = (card?.pointValue || 0) >= 1;
+        const points = noPointsPattern.test(txn.description) ? 0
+          : isCb ? Math.round(txn.amount * rate / 100)
+          : Math.floor((txn.amount / 100) * rate);
+        const { data: rows } = await supabase
+          .from("transactions")
+          .insert({ user_id: userId, card_id: cardId, data: { merchant: txn.description, category: txn.category, amount: txn.amount, type: "card", icon: txn.icon, points, date: txn.date, source: "statement" } })
+          .select("id, card_id, data");
+        if (rows?.[0]) {
+          const r = rows[0];
+          setTxns(prev => [{ ...r.data, id: r.id, cardId: r.card_id }, ...prev]);
+        }
       }
     }
-    // Update card billing info if user opted in
+
+    // ── Update card billing info ───────────────────────────────────────────────
     if (saveBilling && billing && card) {
+      // Any remaining unbilled (unmatched) txns are genuinely from the NEXT cycle.
+      // Add them on top of the statement total so they don't get wiped.
+      const unmatchedAmt = existingUnbilled
+        .filter(t => !matchedIds.has(t.id))
+        .reduce((s, t) => s + t.amount, 0);
+
+      const baseDue = billing.totalDue > 0 ? billing.totalDue : card.totalDue;
       const updated = {
         ...card,
-        ...(billing.totalDue > 0 && { totalDue: billing.totalDue, spent: billing.totalDue }),
-        ...(billing.minDue   > 0 && { minDue: billing.minDue }),
-        ...(billing.dueDate       && { dueDate: billing.dueDate }),
+        totalDue: baseDue + unmatchedAmt,
+        spent:    baseDue + unmatchedAmt,
+        ...(billing.minDue  > 0  && { minDue:    billing.minDue }),
+        ...(billing.dueDate      && { dueDate:   billing.dueDate }),
+        ...(billing.stmtDate     && { stmtDate:  billing.stmtDate }),
       };
       setCards(prev => prev.map(c => c.id === cardId ? updated : c));
       await supabase.from("cards").update({ data: updated }).eq("id", cardId);
+    }
+
+    // Show reconciliation result toast
+    if (mergedCount > 0 || addedCount > 0) {
+      setReconcileResult({ merged: mergedCount, added: addedCount, card: card?.name });
     }
   };
 
@@ -1668,6 +2058,36 @@ export default function CardIQ() {
     };
     setCards(prev => prev.map(c => c.id === cardId ? updated : c));
     await supabase.from("cards").update({ data: updated }).eq("id", cardId);
+  };
+
+  const handleSMSAdd = async (txn) => {
+    const { cardId, ...rest } = txn;
+    const card = cards.find(c => c.id === cardId);
+    // Calculate reward points same way as statement import
+    const noPointsPattern = /emi|[csig]st|\btax\b|service charge|annual fee|joining fee|renewal fee|overlimit|cash advance|processing fee|insurance premium|finance charge|\bloan\b|instaloan/i;
+    const key    = categoryRewardKey[rest.category] || "other";
+    const rate   = card?.rewardRate?.[key] || 1;
+    const isCb   = (card?.pointValue || 0) >= 1;
+    const points = (rest.type !== "debit" || noPointsPattern.test(rest.merchant || "")) ? 0
+      : isCb ? Math.round(rest.amount * rate / 100)
+      : Math.floor((rest.amount / 100) * rate);
+
+    const { data: rows } = await supabase
+      .from("transactions")
+      .insert({ user_id: userId, card_id: cardId, data: { ...rest, points, source: "sms" } })
+      .select("id, card_id, data");
+    if (rows?.[0]) {
+      const r = rows[0];
+      setTxns(prev => [{ ...r.data, id: r.id, cardId: r.card_id }, ...prev]);
+    }
+    if (card && rest.type === "debit") {
+      const updated = { ...card, spent: card.spent + rest.amount, totalDue: card.totalDue + rest.amount,
+        points: (card.points || 0) + points };
+      setCards(prev => prev.map(c => c.id === cardId ? updated : c));
+      const { id, ...data } = updated;
+      supabase.from("cards").update({ data }).eq("id", id);
+    }
+    setShowSMSModal(false);
   };
 
   const now   = new Date();
@@ -1785,11 +2205,12 @@ export default function CardIQ() {
             <AlertBanner cards={cards} />
 
             <div style={{ opacity: animIn ? 1 : 0, transform: animIn ? "translateY(0)" : "translateY(10px)", transition: "all 0.3s ease" }}>
-              {activeTab === 0 && <CardsTab isDesktop={isDesktop} cards={cards} onSelect={setSelectedCard} selected={selectedCard} onQRPay={setQrCard} onAdd={() => setShowAddCard(true)} onEdit={setEditCard} onDelete={handleDeleteCard} />}
+              {activeTab === 0 && <CardsTab isDesktop={isDesktop} cards={cards} txns={txns} onSelect={setSelectedCard} selected={selectedCard} onQRPay={setQrCard} onAdd={() => setShowAddCard(true)} onEdit={setEditCard} onDelete={handleDeleteCard} />}
               {activeTab === 1 && <SmartPayTab cards={cards} category={category} setCategory={setCategory} amount={amount} setAmount={setAmount} txnType={txnType} setTxnType={setTxnType} onAnalyze={handleAnalyze} recommendations={recommendations} onQRPay={setQrCard} />}
-              {activeTab === 2 && <BillsTab cards={cards} onViewBill={setBillCard} onMarkPaid={handleMarkPaid} />}
-              {activeTab === 3 && <TransactionsTab txns={txns} cards={cards} onAdd={() => setShowAddTxn(true)} onUploadStatement={() => fileInputRef.current?.click()} />}
+              {activeTab === 2 && <BillsTab cards={cards} txns={txns} onViewBill={setBillCard} onMarkPaid={handleMarkPaid} />}
+              {activeTab === 3 && <TransactionsTab txns={txns} cards={cards} onAdd={() => setShowAddTxn(true)} onUploadStatement={() => fileInputRef.current?.click()} onAddFromSMS={() => setShowSMSModal(true)} />}
               {activeTab === 4 && <InsightsTab cards={cards} txns={txns} totalLimit={totalLimit} totalSpent={totalSpent} totalAvailable={totalAvailable} />}
+              {activeTab === 5 && <BudgetTab txns={txns} cards={cards} />}
             </div>
           </div>
         </div>
@@ -1827,6 +2248,7 @@ export default function CardIQ() {
       {showAddCard && <AddEditCardModal onSave={handleSaveCard} onClose={() => setShowAddCard(false)} />}
       {editCard  && <AddEditCardModal card={editCard} onSave={handleSaveCard} onClose={() => setEditCard(null)} />}
       {parsedStatement && <StatementReviewModal parsedTxns={parsedStatement.txns} rawLines={parsedStatement.rawLines} billing={parsedStatement.billing} identity={parsedStatement.identity} cards={cards} onImport={handleImportStatement} onClose={() => setParsedStatement(null)} />}
+      {showSMSModal && cards.length > 0 && <SMSParseModal cards={cards} onAdd={handleSMSAdd} onClose={() => setShowSMSModal(false)} />}
       {pendingPDFFile && <PDFPasswordModal isWrong={pdfPasswordErr === "PASSWORD_WRONG"} onSubmit={handlePasswordSubmit} onClose={() => { setPendingPDFFile(null); setPdfPasswordErr(null); }} />}
 
       {/* RBL auto-save success toast */}
@@ -1840,6 +2262,26 @@ export default function CardIQ() {
               {rblAutoSaved.minDue > 0 && ` · Min ₹${rblAutoSaved.minDue.toLocaleString("en-IN")}`}
               {rblAutoSaved.dueDate && ` · By ${new Date(rblAutoSaved.dueDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}`}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reconciliation toast */}
+      {reconcileResult && (
+        <div onClick={() => setReconcileResult(null)} style={{ position: "fixed", bottom: 80, left: "50%", transform: "translateX(-50%)", background: "#111", border: "1px solid #2a3a2a", borderRadius: 16, padding: "14px 20px", zIndex: 700, display: "flex", alignItems: "flex-start", gap: 12, cursor: "pointer", minWidth: 280, maxWidth: 360, boxShadow: "0 8px 32px rgba(0,0,0,0.6)", animation: "slideUp 0.3s ease" }}>
+          <div style={{ fontSize: 24, flexShrink: 0 }}>✅</div>
+          <div>
+            <div style={{ color: "#34e89e", fontWeight: 700, fontSize: 13 }}>Statement imported — {reconcileResult.card}</div>
+            <div style={{ color: "#aaa", fontSize: 12, marginTop: 4, lineHeight: 1.5 }}>
+              {reconcileResult.added > 0 && <span>+{reconcileResult.added} new txn{reconcileResult.added !== 1 ? "s" : ""}</span>}
+              {reconcileResult.merged > 0 && reconcileResult.added > 0 && <span style={{ color: "#555" }}> · </span>}
+              {reconcileResult.merged > 0 && <span style={{ color: "#c084fc" }}>{reconcileResult.merged} SMS entr{reconcileResult.merged !== 1 ? "ies" : "y"} reconciled</span>}
+            </div>
+            {reconcileResult.merged > 0 && (
+              <div style={{ fontSize: 11, color: "#555", marginTop: 4 }}>
+                Manually added txns merged — no duplicates
+              </div>
+            )}
           </div>
         </div>
       )}
