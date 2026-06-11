@@ -125,12 +125,15 @@ export function parseBillingSummary(lines) {
   // ICICI layout: "= + + - `22,260.00" formula in joined text.
   let totalDue = 0;
 
-  const totalDueLabelRe = /total\s+(?:amount|payment)\s+due/i;
+  const totalDueLabelRe = /total\s+(?:amount|payment)\s+due|total\s+outstanding(?:\s+(?:amount|balance))?|net\s+(?:amount\s+)?payable/i;
   for (let i = 0; i < lines.length && !totalDue; i++) {
     if (!totalDueLabelRe.test(lines[i])) continue;
-    // Case A: value on the same line (Axis, some SBI) — take last number
-    const sameNums = allNums(lines[i]);
-    if (sameNums.length > 0) { totalDue = sameNums[sameNums.length - 1]; break; }
+    // Case A: value on the same line — take the FIRST number after the label
+    // (not last, because RBL two-column merge appends unrelated amounts after)
+    const labelMatch = lines[i].match(totalDueLabelRe);
+    const afterLabel = lines[i].slice(labelMatch.index + labelMatch[0].length);
+    const afterNums  = allNums(afterLabel);
+    if (afterNums.length > 0) { totalDue = afterNums[0]; break; }
     // Case B: value on next 1-3 lines (HDFC multi-col row, SBI standalone)
     for (let j = i + 1; j <= Math.min(i + 3, lines.length - 1); j++) {
       const nums = allNums(lines[j]);
@@ -163,6 +166,18 @@ export function parseBillingSummary(lines) {
   }
   // Fallback to joined text
   if (!minDue) minDue = amt(text.match(/min(?:imum)?\.?\s*(?:amount\s+|payment\s+|amt\.?\s*)?due[^`₹\d=]{0,50}[`₹C]?\s*([\d,]+\.\d{2})/i));
+
+  // Sanity check: totalDue must be >= minDue. If not, the parser grabbed the wrong number.
+  // Re-scan using the largest number found on/near the label line.
+  if (totalDue > 0 && minDue > 0 && totalDue < minDue) {
+    totalDue = 0;
+    for (let i = 0; i < lines.length && !totalDue; i++) {
+      if (!totalDueLabelRe.test(lines[i])) continue;
+      const combined = lines.slice(i, Math.min(i + 4, lines.length)).join(" ");
+      const nums = allNums(combined);
+      if (nums.length > 0) { totalDue = Math.max(...nums); break; }
+    }
+  }
 
   // Payment Due Date — DD Mon YYYY, Mon DD YYYY, DD/MM/YYYY
   const dueDate = date(
@@ -235,7 +250,23 @@ export function parseTransactions(lines) {
       const m = line.match(pat);
       if (m) { dateStr = m[1].trim(); rest = line.slice(m[0].length); break; }
     }
+    // Fallback: mid-line date (RBL two-column layout merges account-summary + transaction row)
+    if (!dateStr) {
+      for (const pat of DATE_PATTERNS) {
+        const midPat = new RegExp(pat.source.replace(/^\^/, ""), pat.flags);
+        const m = line.match(midPat);
+        if (m && m.index > 5) {
+          dateStr = m[1].trim();
+          rest = line.slice(m.index + m[0].length);
+          break;
+        }
+      }
+    }
     if (!dateStr) continue;
+
+    // Skip dates from billing history / account summary sections (e.g. RBL shows 2018–2019 old cycles)
+    const yr4 = dateStr.match(/\b(20\d{2})\b/);
+    if (yr4 && parseInt(yr4[1]) < 2020) continue;
 
     let amount       = null;
     let txnType      = "debit";
@@ -268,7 +299,9 @@ export function parseTransactions(lines) {
 
     // Skip summary/header/system rows and bare type-words
     if (/^(debit|credit)$/i.test(description)) continue;
-    if (/opening balance|closing balance|payment received|surcharge waiver|transactions for|minimum amount due|finance charge|late payment fee|emi interest|emi instalment|emi principal|goods.{0,5}service.{0,5}tax|\b[CSI]?GST\b|stpl emi|dial for cash|\btax\b|service charge|annual fee|joining fee|renewal fee|overlimit fee|cheque bounce|cash advance fee|processing fee|insurance premium|\bloan\b|loan repayment|loan instalment|loan emi|instaloan/i.test(description)) continue;
+    // Skip descriptions that are just a date label (e.g. "- 21 Jan", "02 Feb")
+    if (/^-?\s*\d{1,2}\s+[A-Za-z]{3}\s*$/.test(description)) continue;
+    if (/opening balance|closing balance|payment received|payment credit|surcharge waiver|fuel surcharge|petrol surcharge|transactions for|minimum amount due|finance charge|late payment fee|emi interest|emi instalment|emi principal|goods.{0,5}service.{0,5}tax|\b[CSI]?GST\b|stpl emi|dial for cash|\btax\b|service charge|annual fee|joining fee|renewal fee|overlimit fee|cheque bounce|cash advance fee|processing fee|insurance premium|\bloan\b|loan repayment|loan instalment|loan emi|instaloan/i.test(description)) continue;
 
     const category = detectCategory(description);
     results.push({

@@ -811,7 +811,7 @@ function CardsTab({ cards, txns, onSelect, selected, onQRPay, onAdd, onEdit, onD
 }
 
 // ─── SMART PAY TAB ────────────────────────────────────────────────────────────
-function SmartPayTab({ cards, category, setCategory, amount, setAmount, txnType, setTxnType, onAnalyze, recommendations, onQRPay }) {
+function SmartPayTab({ cards, txns, category, setCategory, amount, setAmount, txnType, setTxnType, onAnalyze, recommendations, onQRPay }) {
   if (cards.length === 0) return <div style={{ textAlign: "center", padding: "80px 20px" }}><div style={{ fontSize: 48, marginBottom: 16 }}>🧠</div><div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>No cards to compare</div><div style={{ fontSize: 14, color: "#555" }}>Add cards to get smart payment recommendations</div></div>;
 
   const catIcons = { Dining: "🍽️", Travel: "✈️", Fuel: "⛽", Shopping: "🛍️", Entertainment: "🎬", "Online Shopping": "📦", Groceries: "🛒", Other: "💸" };
@@ -887,6 +887,27 @@ function SmartPayTab({ cards, category, setCategory, amount, setAmount, txnType,
               <span>{offer.icon}</span>
               <span style={{ marginLeft: 6, fontSize: 11, color: "#f0e68c" }}>{offer.discount} on {offer.partner} · Exp {offer.expiry}</span>
             </div>}
+            {/* Utilization + unbilled info */}
+            {(() => {
+              const unbilledAmt = txns.filter(t => t.cardId === card.id && (t.source === "sms" || t.source === "manual") && t.type !== "credit").reduce((s, t) => s + t.amount, 0);
+              const utilPct = card.limit > 0 ? (card.spent / card.limit) * 100 : 0;
+              const utilColor = utilPct < 30 ? "#34e89e" : utilPct < 60 ? "#f97316" : "#e94560";
+              return (
+                <div style={{ marginTop: 10, padding: "8px 10px", background: "#0a0a0a", borderRadius: 8, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 10, color: "#555" }}>UTIL</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: utilColor }}>{utilPct.toFixed(0)}%</span>
+                  <span style={{ fontSize: 10, color: "#2a2a2a" }}>|</span>
+                  <span style={{ fontSize: 10, color: "#555" }}>BILLED</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#fff" }}>{fmtCurrency(card.spent)}</span>
+                  <span style={{ fontSize: 10, color: "#555" }}>/ {fmtCurrency(card.limit)}</span>
+                  {unbilledAmt > 0 && <>
+                    <span style={{ fontSize: 10, color: "#2a2a2a" }}>|</span>
+                    <span style={{ fontSize: 10, color: "#c084fc" }}>UNBILLED</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#c084fc" }}>+{fmtCurrency(unbilledAmt)}</span>
+                  </>}
+                </div>
+              );
+            })()}
             {card.supportsQR && txnType === "qr" && <button onClick={() => onQRPay(card)} style={{ ...M.btn, marginTop: 10, padding: "10px", fontSize: 13, background: "linear-gradient(90deg,#6c3fc7,#c084fc)" }}>⬛ Open QR Scanner →</button>}
           </div>
         ))}
@@ -962,9 +983,157 @@ function MarkPaidModal({ card, onConfirm, onClose }) {
   );
 }
 
+// ─── MONTH HELPERS ────────────────────────────────────────────────────────────
+function parseTxnMonth(dateStr) {
+  if (!dateStr) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return { year: +dateStr.slice(0,4), month: +dateStr.slice(5,7)-1 };
+  const M = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+  const m1 = dateStr.match(/(\d{1,2})[\s\-]([A-Za-z]{3})[\s\-,]\s*'?(\d{2,4})/);
+  if (m1) { const mon=M[m1[2].toLowerCase()]; if(mon!==undefined) return {year:m1[3].length===2?2000+parseInt(m1[3]):+m1[3],month:mon}; }
+  const m2 = dateStr.match(/([A-Za-z]{3})\s+(\d{1,2}),?\s*(\d{4})/);
+  if (m2) { const mon=M[m2[1].toLowerCase()]; if(mon!==undefined) return {year:+m2[3],month:mon}; }
+  const m3 = dateStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (m3) return {year:+m3[3],month:+m3[2]-1};
+  return null;
+}
+function txnInMonth(t, selMonth) {
+  const m = parseTxnMonth(t.date);
+  return m && m.year === selMonth.year && m.month === selMonth.month;
+}
+function MonthPicker({ selMonth, onChange }) {
+  const now = new Date();
+  const isCurrent = selMonth.year === now.getFullYear() && selMonth.month === now.getMonth();
+  const label = new Date(selMonth.year, selMonth.month, 1).toLocaleString("en-IN", { month: "long", year: "numeric" });
+  const prev = () => onChange(selMonth.month === 0 ? {year:selMonth.year-1,month:11} : {year:selMonth.year,month:selMonth.month-1});
+  const next = () => { if (!isCurrent) onChange(selMonth.month === 11 ? {year:selMonth.year+1,month:0} : {year:selMonth.year,month:selMonth.month+1}); };
+  return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"#111",borderRadius:14,padding:"10px 16px",marginBottom:16,border:"1px solid #1e1e1e"}}>
+      <button onClick={prev} style={{background:"none",border:"none",color:"#4286f4",fontSize:22,cursor:"pointer",lineHeight:1,padding:"0 6px"}}>‹</button>
+      <div style={{fontSize:14,fontWeight:700,color:"#fff",display:"flex",alignItems:"center",gap:8}}>
+        {label}
+        {isCurrent && <span style={{fontSize:9,color:"#34e89e",background:"rgba(52,232,158,0.12)",borderRadius:4,padding:"2px 6px",letterSpacing:0.5}}>NOW</span>}
+      </div>
+      <button onClick={next} style={{background:"none",border:"none",color:isCurrent?"#333":"#4286f4",fontSize:22,cursor:isCurrent?"default":"pointer",lineHeight:1,padding:"0 6px"}}>›</button>
+    </div>
+  );
+}
+
+// ─── ADD EMI MODAL ────────────────────────────────────────────────────────────
+function AddEMIModal({ cards, onSave, onClose, emiToEdit, preselectedCardId }) {
+  const [cardId, setCardId]       = useState(preselectedCardId || emiToEdit?.cardId || cards[0]?.id || "");
+  const [name, setName]           = useState(emiToEdit?.name || "");
+  const [totalAmt, setTotalAmt]   = useState(emiToEdit ? String(emiToEdit.totalAmount) : "");
+  const [emiAmt, setEmiAmt]       = useState(emiToEdit ? String(emiToEdit.emiAmount) : "");
+  const [tenure, setTenure]       = useState(emiToEdit ? String(emiToEdit.tenure) : "");
+  const [paidCount, setPaidCount] = useState(emiToEdit ? String(emiToEdit.paidCount) : "0");
+  const [startDate, setStartDate] = useState(emiToEdit?.startDate || new Date().toISOString().slice(0, 7));
+
+  const tenureN   = parseInt(tenure)   || 0;
+  const paidN     = parseInt(paidCount) || 0;
+  const emiAmtN   = parseFloat(emiAmt) || 0;
+  const remaining = Math.max(0, tenureN - paidN);
+  const outstanding = emiAmtN * remaining;
+
+  const handleSave = () => {
+    if (!name.trim() || !emiAmtN || !tenureN || !cardId) return;
+    onSave(cardId, {
+      id: emiToEdit?.id || Date.now().toString(),
+      name: name.trim(),
+      totalAmount: parseFloat(totalAmt) || 0,
+      emiAmount: emiAmtN,
+      tenure: tenureN,
+      paidCount: paidN,
+      startDate,
+    });
+  };
+
+  return (
+    <div style={M.overlay} onClick={onClose}>
+      <div style={{ ...M.sheet, paddingBottom: 50, maxHeight: "92vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
+        <div style={M.handle} />
+        <div style={{ fontSize: 18, fontWeight: 800, color: "#fff", marginBottom: 20 }}>{emiToEdit ? "Edit EMI" : "Track EMI"}</div>
+
+        <div style={ST.label}>CARD</div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 14, overflowX: "auto", paddingBottom: 4 }}>
+          {cards.map(c => (
+            <button key={c.id} onClick={() => setCardId(c.id)}
+              style={{ ...ST.cardPill, borderColor: cardId === c.id ? c.accent : "#2a2a2a", color: cardId === c.id ? c.accent : "#888", background: cardId === c.id ? "#111" : "transparent", flexShrink: 0 }}>
+              {c.bank} ···· {c.last4}
+            </button>
+          ))}
+        </div>
+
+        <div style={ST.label}>PURCHASE / LOAN NAME</div>
+        <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. iPhone 16 Pro, Home Loan EMI…" style={{ ...ST.input, marginBottom: 14 }} autoFocus />
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+          <div>
+            <div style={ST.label}>TOTAL AMOUNT (₹)</div>
+            <input type="number" value={totalAmt} onChange={e => setTotalAmt(e.target.value)} placeholder="0" style={ST.input} />
+          </div>
+          <div>
+            <div style={ST.label}>EMI / MONTH (₹)</div>
+            <input type="number" value={emiAmt} onChange={e => setEmiAmt(e.target.value)} placeholder="Auto" style={ST.input} />
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+          <div>
+            <div style={ST.label}>TENURE (MONTHS)</div>
+            <input type="number" value={tenure} onChange={e => setTenure(e.target.value)} placeholder="12" style={ST.input} />
+          </div>
+          <div>
+            <div style={ST.label}>EMIs PAID SO FAR</div>
+            <input type="number" value={paidCount} onChange={e => setPaidCount(e.target.value)} placeholder="0" style={ST.input} />
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <div style={ST.label}>START MONTH</div>
+          <input type="month" value={startDate} onChange={e => setStartDate(e.target.value)} style={{ ...ST.input, colorScheme: "dark" }} />
+        </div>
+
+        {tenureN > 0 && emiAmtN > 0 && (
+          <div style={{ background: "#111", borderRadius: 14, padding: "14px 16px", marginBottom: 16, border: "1px solid #1e1e1e" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+              <div>
+                <div style={{ fontSize: 10, color: "#555", letterSpacing: 1 }}>REMAINING</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: "#4286f4" }}>{remaining} months</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 10, color: "#555", letterSpacing: 1 }}>OUTSTANDING</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: "#e94560" }}>{fmtCurrency(outstanding)}</div>
+              </div>
+            </div>
+            <div style={{ height: 6, background: "#1a1a1a", borderRadius: 3, overflow: "hidden" }}>
+              <div style={{ width: `${tenureN > 0 ? (paidN / tenureN) * 100 : 0}%`, height: "100%", background: "linear-gradient(90deg,#34e89e,#4286f4)", borderRadius: 3 }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
+              <span style={{ fontSize: 10, color: "#555" }}>{paidN}/{tenureN} paid</span>
+              <span style={{ fontSize: 10, color: "#555" }}>₹{emiAmtN.toLocaleString()}/mo</span>
+            </div>
+          </div>
+        )}
+
+        <button onClick={handleSave} disabled={!name.trim() || !emiAmtN || !tenureN || !cardId}
+          style={{ ...M.btn, background: (name.trim() && emiAmtN && tenureN && cardId) ? "linear-gradient(90deg,#6c3fc7,#c084fc)" : "#1e1e1e", color: (name.trim() && emiAmtN && tenureN && cardId) ? "#fff" : "#444", cursor: (name.trim() && emiAmtN && tenureN && cardId) ? "pointer" : "not-allowed" }}>
+          {emiToEdit ? "Update EMI ✓" : "Track EMI →"}
+        </button>
+        <button onClick={onClose} style={M.ghost}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 // ─── BILLS TAB ────────────────────────────────────────────────────────────────
-function BillsTab({ cards, txns, onViewBill, onMarkPaid }) {
+function BillsTab({ cards, txns, onViewBill, onMarkPaid, onSaveEMI, onDeleteEMI }) {
+  const _now = new Date();
+  const [selMonth, setSelMonth]   = useState({ year: _now.getFullYear(), month: _now.getMonth() });
   const [payingCard, setPayingCard] = useState(null);
+  const [showEMIModal, setShowEMIModal]   = useState(false);
+  const [emiModalData, setEmiModalData]   = useState(null); // { emi, cardId } for edit | { cardId } for new
+  const isCurrent  = selMonth.year === _now.getFullYear() && selMonth.month === _now.getMonth();
+  const monthLabel = new Date(selMonth.year, selMonth.month, 1).toLocaleString("en-IN", { month: "long", year: "numeric" });
 
   if (cards.length === 0) return <div style={{ textAlign: "center", padding: "80px 20px" }}><div style={{ fontSize: 48, marginBottom: 16 }}>🗓️</div><div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>No cards added</div><div style={{ fontSize: 14, color: "#555" }}>Add cards from the Cards tab to track bills</div></div>;
 
@@ -972,11 +1141,21 @@ function BillsTab({ cards, txns, onViewBill, onMarkPaid }) {
   const totalDue = cards.reduce((s, c) => s + (c.totalDue || 0), 0);
   const totalMin = cards.reduce((s, c) => s + (c.minDue || 0), 0);
 
-  // Unbilled = manually added (sms/manual) transactions per card
   const getUnbilled = (card) => txns.filter(t =>
     t.cardId === card.id && (t.source === "sms" || t.source === "manual") && t.type !== "credit"
   );
-  const totalUpcoming = cards.reduce((s, c) => s + getUnbilled(c).reduce((a, t) => a + t.amount, 0), 0);
+  const totalUpcoming    = cards.reduce((s, c) => s + getUnbilled(c).reduce((a, t) => a + t.amount, 0), 0);
+  const getMonthTxns     = (card) => txns.filter(t => t.cardId === card.id && t.type !== "credit" && t.source !== "payment" && txnInMonth(t, selMonth));
+  const getMonthPayments = (month) => txns.filter(t => t.source === "payment" && txnInMonth(t, month));
+
+  // All active EMIs across all cards
+  const allActiveEMIs = cards.flatMap(card =>
+    (card.emis || []).filter(e => e.paidCount < e.tenure).map(e => ({ ...e, card }))
+  );
+  const totalMonthlyEMI = allActiveEMIs.reduce((s, e) => s + e.emiAmount, 0);
+
+  // Recent payment history (all time, latest first)
+  const allPayments = txns.filter(t => t.source === "payment").slice(0, 12);
 
   return (
     <div>
@@ -987,8 +1166,98 @@ function BillsTab({ cards, txns, onViewBill, onMarkPaid }) {
           onClose={() => setPayingCard(null)}
         />
       )}
+      {showEMIModal && (
+        <AddEMIModal
+          cards={cards}
+          emiToEdit={emiModalData?.emi || null}
+          preselectedCardId={emiModalData?.cardId || null}
+          onSave={(cId, emi) => { onSaveEMI(cId, emi); setShowEMIModal(false); setEmiModalData(null); }}
+          onClose={() => { setShowEMIModal(false); setEmiModalData(null); }}
+        />
+      )}
 
-      <div style={S.secLabel}>UPCOMING BILLS</div>
+      <MonthPicker selMonth={selMonth} onChange={setSelMonth} />
+
+      {!isCurrent ? (
+        // ── Past month: payments + per-card spending summary ──────────────────
+        (() => {
+          const payments  = getMonthPayments(selMonth);
+          const totalPaid = payments.reduce((s, t) => s + t.amount, 0);
+          const total     = cards.reduce((s, c) => s + getMonthTxns(c).reduce((a,t)=>a+t.amount,0), 0);
+          return (
+            <>
+              {/* Payments made in this month */}
+              {totalPaid > 0 && <>
+                <div style={S.secLabel}>PAYMENTS MADE — {monthLabel.toUpperCase()}</div>
+                <div style={{ background: "#111", borderRadius: 16, padding: 16, marginBottom: 16, border: "1px solid #1e3a1e" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: payments.length > 0 ? 10 : 0 }}>
+                    <div>
+                      <div style={{ fontSize: 10, color: "#555", letterSpacing: 1 }}>TOTAL PAID</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: "#34e89e" }}>{fmtCurrency(totalPaid)}</div>
+                    </div>
+                    <div style={{ fontSize: 28 }}>✅</div>
+                  </div>
+                  {payments.map((p, i) => {
+                    const pCard = cards.find(c => c.id === p.cardId);
+                    return (
+                      <div key={p.id || i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderTop: "1px solid #1a1a1a" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          {pCard && <div style={{ width: 28, height: 18, borderRadius: 4, background: `linear-gradient(135deg,${pCard.color[0]},${pCard.color[1]})`, flexShrink: 0 }} />}
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: "#ddd" }}>{pCard?.name || "Card"}</div>
+                            <div style={{ fontSize: 10, color: "#555" }}>{fmtDate(p.date)}{p.mode && p.mode !== "custom" ? ` · ${p.mode}` : ""}</div>
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#34e89e" }}>₹{p.amount.toLocaleString()}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>}
+
+              {/* Spend summary */}
+              <div style={S.secLabel}>SPEND — {monthLabel.toUpperCase()}</div>
+              {total > 0 && (
+                <div style={{ background: "#111", borderRadius: 20, padding: "20px", marginBottom: 16, border: "1px solid #1e1e1e" }}>
+                  <div style={{ fontSize: 10, color: "#555", letterSpacing: 1 }}>TOTAL SPENT</div>
+                  <div style={{ fontSize: 28, fontWeight: 900, color: "#e94560", marginTop: 4 }}>{fmtCurrency(total)}</div>
+                </div>
+              )}
+              {cards.map((card, i) => {
+                const mTxns = getMonthTxns(card);
+                const mSpent = mTxns.reduce((s,t)=>s+t.amount,0);
+                if (!mSpent) return null;
+                return (
+                  <div key={card.id} style={{ background: "#111", borderRadius: 16, padding: 16, marginBottom: 10, border: "1px solid #1e1e1e", animation: `slideUp 0.3s ease ${i*60}ms both` }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: 10, background: `linear-gradient(135deg,${card.color[0]},${card.color[1]})`, flexShrink: 0 }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>{card.name}</div>
+                        <div style={{ fontSize: 11, color: "#666" }}>{mTxns.length} transaction{mTxns.length !== 1 ? "s" : ""}</div>
+                      </div>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: "#e94560" }}>{fmtCurrency(mSpent)}</div>
+                    </div>
+                    {mTxns.slice(0, 5).map((t, j) => (
+                      <div key={j} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderTop: "1px solid #1a1a1a" }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: "#ddd", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.merchant || t.description}</div>
+                          <div style={{ fontSize: 10, color: "#555" }}>{t.date} · {t.category}</div>
+                        </div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", flexShrink: 0, marginLeft: 8 }}>₹{t.amount.toLocaleString()}</div>
+                      </div>
+                    ))}
+                    {mTxns.length > 5 && <div style={{ fontSize: 11, color: "#555", textAlign: "center", paddingTop: 8 }}>+{mTxns.length - 5} more</div>}
+                  </div>
+                );
+              })}
+              {!total && !totalPaid && <div style={{ textAlign: "center", color: "#555", fontSize: 14, padding: "60px 0" }}>No activity in {monthLabel}</div>}
+            </>
+          );
+        })()
+      ) : (
+        // ── Current month: outstanding bills ───────────────────────────────────
+        <>
+          <div style={S.secLabel}>UPCOMING BILLS</div>
       <div style={{ background: "#111", borderRadius: 20, padding: "20px", marginBottom: 16, border: "1px solid #1e1e1e" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
@@ -1078,6 +1347,112 @@ function BillsTab({ cards, txns, onViewBill, onMarkPaid }) {
           </div>
         );
       })}
+
+          {/* ── EMI Overview ──────────────────────────────────────────────────── */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
+            <div style={S.secLabel}>EMIs</div>
+            <button onClick={() => { setEmiModalData(null); setShowEMIModal(true); }}
+              style={{ fontSize: 11, color: "#c084fc", background: "transparent", border: "1px solid #4a2a8a", borderRadius: 8, padding: "4px 10px", cursor: "pointer", marginBottom: 12 }}>
+              + Track EMI
+            </button>
+          </div>
+
+          {allActiveEMIs.length > 0 ? (
+            <div style={{ background: "#111", borderRadius: 16, padding: 16, marginBottom: 16, border: "1px solid #1e1e2e" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                <div>
+                  <div style={{ fontSize: 10, color: "#555", letterSpacing: 1 }}>MONTHLY EMI BURDEN</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: "#c084fc" }}>{fmtCurrency(totalMonthlyEMI)}/mo</div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 10, color: "#555", letterSpacing: 1 }}>ACTIVE EMIs</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: "#fff" }}>{allActiveEMIs.length}</div>
+                </div>
+              </div>
+              {allActiveEMIs.map((emi) => {
+                const remaining = emi.tenure - emi.paidCount;
+                const outstanding = emi.emiAmount * remaining;
+                const progressPct = emi.tenure > 0 ? (emi.paidCount / emi.tenure) * 100 : 0;
+                return (
+                  <div key={emi.id} style={{ padding: "12px 0", borderTop: "1px solid #1a1a1a" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: "#ddd" }}>{emi.name}</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+                          <div style={{ width: 16, height: 10, borderRadius: 2, background: `linear-gradient(135deg,${emi.card.color[0]},${emi.card.color[1]})` }} />
+                          <span style={{ fontSize: 10, color: "#666" }}>{emi.card.name}</span>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right", flexShrink: 0, marginLeft: 8 }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#e94560" }}>{fmtCurrency(outstanding)}</div>
+                        <div style={{ fontSize: 9, color: "#555" }}>outstanding</div>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 11, color: "#c084fc" }}>₹{emi.emiAmount.toLocaleString()}/mo</span>
+                      <span style={{ fontSize: 11, color: "#555" }}>·</span>
+                      <span style={{ fontSize: 11, color: "#aaa" }}>{remaining} of {emi.tenure} months left</span>
+                      {emi.paidCount > 0 && <><span style={{ fontSize: 11, color: "#555" }}>·</span><span style={{ fontSize: 11, color: "#34e89e" }}>{emi.paidCount} paid</span></>}
+                    </div>
+                    <div style={{ height: 4, background: "#1a1a1a", borderRadius: 2, overflow: "hidden", marginBottom: 8 }}>
+                      <div style={{ width: `${progressPct}%`, height: "100%", background: "linear-gradient(90deg,#34e89e,#4286f4)", borderRadius: 2 }} />
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => onSaveEMI(emi.card.id, { ...emi, paidCount: Math.min(emi.paidCount + 1, emi.tenure) })}
+                        style={{ fontSize: 10, color: "#34e89e", background: "transparent", border: "1px solid #1e3a1e", borderRadius: 6, padding: "4px 8px", cursor: "pointer" }}>
+                        +1 EMI Paid
+                      </button>
+                      <button onClick={() => { setEmiModalData({ emi, cardId: emi.card.id }); setShowEMIModal(true); }}
+                        style={{ fontSize: 10, color: "#888", background: "transparent", border: "1px solid #2a2a2a", borderRadius: 6, padding: "4px 8px", cursor: "pointer" }}>
+                        Edit
+                      </button>
+                      <button onClick={() => onDeleteEMI(emi.card.id, emi.id)}
+                        style={{ fontSize: 10, color: "#555", background: "transparent", border: "1px solid #2a2a2a", borderRadius: 6, padding: "4px 8px", cursor: "pointer" }}>
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div style={{ background: "#111", borderRadius: 14, padding: "16px", marginBottom: 16, border: "1px solid #1e1e1e", textAlign: "center" }}>
+              <div style={{ fontSize: 24, marginBottom: 6 }}>📅</div>
+              <div style={{ fontSize: 13, color: "#666" }}>No active EMIs tracked</div>
+              <div style={{ fontSize: 11, color: "#555", marginTop: 4 }}>Track your EMIs to see monthly burden & outstanding balance</div>
+            </div>
+          )}
+
+          {/* ── Payment History ───────────────────────────────────────────────── */}
+          {allPayments.length > 0 && <>
+            <div style={S.secLabel}>PAYMENT HISTORY</div>
+            <div style={{ background: "#111", borderRadius: 16, padding: 16, marginBottom: 16, border: "1px solid #1e3a1e" }}>
+              {allPayments.map((p, i) => {
+                const pCard = cards.find(c => c.id === p.cardId);
+                return (
+                  <div key={p.id || i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderBottom: i < allPayments.length - 1 ? "1px solid #1a1a1a" : "none" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      {pCard && <div style={{ width: 30, height: 20, borderRadius: 4, background: `linear-gradient(135deg,${pCard.color[0]},${pCard.color[1]})`, flexShrink: 0 }} />}
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: "#ddd" }}>{pCard?.name || "Card"}</div>
+                        <div style={{ fontSize: 10, color: "#555" }}>{fmtDate(p.date)}{p.mode && p.mode !== "custom" ? ` · ${p.mode} payment` : ""}</div>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#34e89e" }}>₹{p.amount.toLocaleString()}</div>
+                      <div style={{ fontSize: 9, color: "#34e89e", opacity: 0.6, letterSpacing: 0.5 }}>PAID</div>
+                    </div>
+                  </div>
+                );
+              })}
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #1e1e1e", display: "flex", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 11, color: "#555" }}>Last {allPayments.length} payments</span>
+                <span style={{ fontSize: 11, color: "#34e89e", fontWeight: 700 }}>Total: {fmtCurrency(allPayments.reduce((s, p) => s + p.amount, 0))}</span>
+              </div>
+            </div>
+          </>}
+        </>
+      )}
     </div>
   );
 }
@@ -1403,6 +1778,7 @@ function BudgetTab({ txns, cards }) {
   const [limit, setLimit]       = useState(stored().monthlyLimit || 0);
   const [editing, setEditing]   = useState(!stored().monthlyLimit);
   const [inputVal, setInputVal] = useState(String(stored().monthlyLimit || ""));
+  const [selMonth, setSelMonth] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
 
   const save = () => {
     const v = parseFloat(inputVal) || 0;
@@ -1411,10 +1787,8 @@ function BudgetTab({ txns, cards }) {
     setEditing(false);
   };
 
-  const now        = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-  const monthName  = now.toLocaleString("en-IN", { month: "long", year: "numeric" });
-  const thisMonth  = txns.filter(t => t.type !== "credit" && t.date >= monthStart);
+  const monthName  = new Date(selMonth.year, selMonth.month, 1).toLocaleString("en-IN", { month: "long", year: "numeric" });
+  const thisMonth  = txns.filter(t => t.type !== "credit" && txnInMonth(t, selMonth));
   const spent      = thisMonth.reduce((s, t) => s + (t.amount || 0), 0);
   const pct        = limit > 0 ? Math.min((spent / limit) * 100, 100) : 0;
   const remaining  = limit - spent;
@@ -1429,6 +1803,7 @@ function BudgetTab({ txns, cards }) {
   return (
     <div>
       <div style={S.secLabel}>MONTHLY SPEND BUDGET</div>
+      <MonthPicker selMonth={selMonth} onChange={setSelMonth} />
 
       {/* Limit setter */}
       <div style={{ background: "#111", borderRadius: 20, padding: 20, marginBottom: 16, border: "1px solid #1e1e1e" }}>
@@ -1556,8 +1931,10 @@ function BudgetTab({ txns, cards }) {
 // ─── TRANSACTIONS TAB ─────────────────────────────────────────────────────────
 function TransactionsTab({ txns, cards, onAdd, onUploadStatement, onAddFromSMS }) {
   const [filter, setFilter] = useState("all");
-  const filtered = filter === "all" ? txns : filter === "qr" ? txns.filter(t => t.type === "qr") : txns.filter(t => t.cardId === filter);
-  const totalSpent = filtered.reduce((s, t) => s + t.amount, 0);
+  const [selMonth, setSelMonth] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
+  const monthTxns = txns.filter(t => txnInMonth(t, selMonth));
+  const filtered = filter === "all" ? monthTxns : filter === "qr" ? monthTxns.filter(t => t.type === "qr") : monthTxns.filter(t => t.cardId === filter);
+  const totalSpent = filtered.filter(t => t.type !== "credit").reduce((s, t) => s + t.amount, 0);
   const totalPts = filtered.reduce((s, t) => s + (t.points || 0), 0);
 
   return (
@@ -1571,8 +1948,10 @@ function TransactionsTab({ txns, cards, onAdd, onUploadStatement, onAddFromSMS }
         </div>
       </div>
 
+      <MonthPicker selMonth={selMonth} onChange={m => { setSelMonth(m); setFilter("all"); }} />
+
       <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
-        {[[fmtCurrency(totalSpent), "#e94560", "SPENT"], [totalPts.toLocaleString(), "#34e89e", "POINTS EARNED"], [txns.filter(t => t.type === "qr").length + "", "#c084fc", "QR TXNs"]].map(([v, c, l]) => (
+        {[[fmtCurrency(totalSpent), "#e94560", "SPENT"], [totalPts.toLocaleString(), "#34e89e", "POINTS EARNED"], [monthTxns.filter(t => t.type === "qr").length + "", "#c084fc", "QR TXNs"]].map(([v, c, l]) => (
           <div key={l} style={{ flex: 1, background: "#111", borderRadius: 14, padding: "12px 10px", border: "1px solid #1e1e1e", textAlign: "center" }}>
             <div style={{ fontSize: 16, fontWeight: 800, color: c }}>{v}</div>
             <div style={{ fontSize: 9, color: "#555", marginTop: 4, letterSpacing: 1 }}>{l}</div>
@@ -1893,6 +2272,27 @@ export default function CardIQ() {
 
   const handleSignOut = () => supabase.auth.signOut();
 
+  const handleSaveEMI = async (cardId, emi) => {
+    const card = cards.find(c => c.id === cardId);
+    if (!card) return;
+    const emis = [...(card.emis || [])];
+    const idx  = emis.findIndex(e => e.id === emi.id);
+    if (idx >= 0) emis[idx] = emi; else emis.push(emi);
+    const updated = { ...card, emis };
+    setCards(prev => prev.map(c => c.id === cardId ? updated : c));
+    const { id, ...data } = updated;
+    await supabase.from("cards").update({ data }).eq("id", id);
+  };
+
+  const handleDeleteEMI = async (cardId, emiId) => {
+    const card = cards.find(c => c.id === cardId);
+    if (!card) return;
+    const updated = { ...card, emis: (card.emis || []).filter(e => e.id !== emiId) };
+    setCards(prev => prev.map(c => c.id === cardId ? updated : c));
+    const { id, ...data } = updated;
+    await supabase.from("cards").update({ data }).eq("id", id);
+  };
+
   // ── Statement upload ───────────────────────────────────────────────────────
   const processPDF = async (file, password) => {
     const lines    = await extractPDFLines(file, password);
@@ -1904,7 +2304,7 @@ export default function CardIQ() {
     setPendingPDFFile(null);
     setPdfPasswordErr(null);
 
-    // RBL: auto-save billing without showing the modal
+    // RBL: auto-save billing. If no transactions parsed, skip modal entirely.
     if (identity?.bank === "RBL Bank" && billing && (billing.totalDue > 0 || billing.dueDate)) {
       const rblCard = cards.find(c => (c.last4 && identity.last4 && c.last4 === identity.last4 && c.bank === "RBL Bank") || c.bank === "RBL Bank");
       if (rblCard) {
@@ -1918,7 +2318,7 @@ export default function CardIQ() {
         setCards(prev => prev.map(c => c.id === rblCard.id ? updated : c));
         await supabase.from("cards").update({ data: updated }).eq("id", rblCard.id);
         setRblAutoSaved({ bank: "RBL Bank", totalDue: billing.totalDue, minDue: billing.minDue, dueDate: billing.dueDate });
-        return;
+        if (txns.length === 0) return; // nothing to review — skip modal
       }
     }
 
@@ -2046,7 +2446,7 @@ export default function CardIQ() {
     }
   };
 
-  const handleMarkPaid = async (cardId, amountPaid, _mode) => {
+  const handleMarkPaid = async (cardId, amountPaid, mode) => {
     const card = cards.find(c => c.id === cardId);
     if (!card) return;
     const remaining = Math.max(0, (card.totalDue || 0) - amountPaid);
@@ -2058,6 +2458,16 @@ export default function CardIQ() {
     };
     setCards(prev => prev.map(c => c.id === cardId ? updated : c));
     await supabase.from("cards").update({ data: updated }).eq("id", cardId);
+    // Record payment in transaction history
+    const today = new Date().toISOString().slice(0, 10);
+    const { data: rows } = await supabase
+      .from("transactions")
+      .insert({ user_id: userId, card_id: cardId, data: { merchant: "Bill Payment", category: "Payment", amount: amountPaid, type: "payment", source: "payment", date: today, icon: "✅", mode: mode || "custom", points: 0 } })
+      .select("id, card_id, data");
+    if (rows?.[0]) {
+      const r = rows[0];
+      setTxns(prev => [{ ...r.data, id: r.id, cardId: r.card_id }, ...prev]);
+    }
   };
 
   const handleSMSAdd = async (txn) => {
@@ -2206,8 +2616,8 @@ export default function CardIQ() {
 
             <div style={{ opacity: animIn ? 1 : 0, transform: animIn ? "translateY(0)" : "translateY(10px)", transition: "all 0.3s ease" }}>
               {activeTab === 0 && <CardsTab isDesktop={isDesktop} cards={cards} txns={txns} onSelect={setSelectedCard} selected={selectedCard} onQRPay={setQrCard} onAdd={() => setShowAddCard(true)} onEdit={setEditCard} onDelete={handleDeleteCard} />}
-              {activeTab === 1 && <SmartPayTab cards={cards} category={category} setCategory={setCategory} amount={amount} setAmount={setAmount} txnType={txnType} setTxnType={setTxnType} onAnalyze={handleAnalyze} recommendations={recommendations} onQRPay={setQrCard} />}
-              {activeTab === 2 && <BillsTab cards={cards} txns={txns} onViewBill={setBillCard} onMarkPaid={handleMarkPaid} />}
+              {activeTab === 1 && <SmartPayTab cards={cards} txns={txns} category={category} setCategory={setCategory} amount={amount} setAmount={setAmount} txnType={txnType} setTxnType={setTxnType} onAnalyze={handleAnalyze} recommendations={recommendations} onQRPay={setQrCard} />}
+              {activeTab === 2 && <BillsTab cards={cards} txns={txns} onViewBill={setBillCard} onMarkPaid={handleMarkPaid} onSaveEMI={handleSaveEMI} onDeleteEMI={handleDeleteEMI} />}
               {activeTab === 3 && <TransactionsTab txns={txns} cards={cards} onAdd={() => setShowAddTxn(true)} onUploadStatement={() => fileInputRef.current?.click()} onAddFromSMS={() => setShowSMSModal(true)} />}
               {activeTab === 4 && <InsightsTab cards={cards} txns={txns} totalLimit={totalLimit} totalSpent={totalSpent} totalAvailable={totalAvailable} />}
               {activeTab === 5 && <BudgetTab txns={txns} cards={cards} />}
