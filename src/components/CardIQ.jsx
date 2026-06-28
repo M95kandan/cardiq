@@ -56,6 +56,20 @@ function getDaysUntil(dateStr) {
   return Math.ceil((due - now) / 86400000);
 }
 
+// Always returns the next upcoming occurrence of the stored due-day each month
+function getNextDueDate(dueDateStr) {
+  if (!dueDateStr) return dueDateStr;
+  const stored = new Date(dueDateStr + "T00:00:00");
+  if (isNaN(stored)) return dueDateStr;
+  const dueDay = stored.getDate();
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  let candidate = new Date(today.getFullYear(), today.getMonth(), dueDay);
+  if (candidate < today) {
+    candidate = new Date(today.getFullYear(), today.getMonth() + 1, dueDay);
+  }
+  return candidate.toISOString().slice(0, 10);
+}
+
 function fmtDate(dateStr) {
   if (!dateStr) return "—";
   return new Date(dateStr).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
@@ -252,7 +266,8 @@ function QRPayModal({ card, onClose, onTransaction }) {
 
 // ─── BILL MODAL ───────────────────────────────────────────────────────────────
 function BillModal({ card, onClose }) {
-  const days = getDaysUntil(card.dueDate);
+  const nextDue = getNextDueDate(card.dueDate);
+  const days = getDaysUntil(nextDue);
   const urgency = days <= 3 ? "#e94560" : days <= 7 ? "#f97316" : "#34e89e";
   return (
     <div style={M.overlay} onClick={onClose}>
@@ -266,7 +281,7 @@ function BillModal({ card, onClose }) {
         <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
           <div style={{ flex: 1, background: "#111", borderRadius: 14, padding: "14px", border: "1px solid #1e1e1e", textAlign: "center" }}>
             <div style={{ fontSize: 10, color: "#555", letterSpacing: 1 }}>DUE DATE</div>
-            <div style={{ fontSize: 18, fontWeight: 800, color: urgency, marginTop: 4 }}>{fmtDate(card.dueDate)}</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: urgency, marginTop: 4 }}>{fmtDate(nextDue)}</div>
             <div style={{ fontSize: 11, color: urgency, marginTop: 2 }}>{days <= 0 ? "OVERDUE" : `${days} days left`}</div>
           </div>
           <div style={{ flex: 1, background: "#111", borderRadius: 14, padding: "14px", border: "1px solid #1e1e1e", textAlign: "center" }}>
@@ -884,16 +899,16 @@ function CardsTab({ cards, txns, onSelect, selected, onQRPay, onAdd, onEdit, onD
         <div style={S.secLabel}>MY CARDS ({cards.length})</div>
         <button onClick={onAdd} style={{ background: "#0d1a33", border: "1px solid #4286f4", color: "#4286f4", borderRadius: 12, padding: "6px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>+ Add Card</button>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: isDesktop ? "repeat(2, 1fr)" : "1fr", gap: 12, alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: isDesktop ? "repeat(2, 1fr)" : "1fr", gap: 12 }}>
         {cards.map((card, i) => (
-          <div key={card.id} style={{ minWidth: 0 }}>
-            <div onClick={() => onSelect(selected?.id === card.id ? null : card)}
-              style={{
-                background: `linear-gradient(135deg,${card.color[0]},${card.color[1]})`,
-                borderRadius: 20, padding: "18px 20px", cursor: "pointer",
-                border: selected?.id === card.id ? `2px solid ${card.accent}` : "2px solid transparent",
-                animation: `slideUp 0.4s ease ${i * 60}ms both`, transition: "transform 0.2s",
-              }}>
+          <div key={card.id}
+            onClick={() => onSelect(selected?.id === card.id ? null : card)}
+            style={{
+              background: `linear-gradient(135deg,${card.color[0]},${card.color[1]})`,
+              borderRadius: 20, padding: "18px 20px", cursor: "pointer",
+              border: selected?.id === card.id ? `2px solid ${card.accent}` : "2px solid transparent",
+              animation: `slideUp 0.4s ease ${i * 60}ms both`, transition: "transform 0.2s",
+            }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                 <div>
                   <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", letterSpacing: 1.5, textTransform: "uppercase" }}>{card.bank}</div>
@@ -945,41 +960,54 @@ function CardsTab({ cards, txns, onSelect, selected, onQRPay, onAdd, onEdit, onD
                           Unbilled {fmtCurrency(unbilledAmt)}
                         </div>
                       )}
-                      {(() => { const d = getDaysUntil(card.dueDate); const col = d <= 3 ? "#e94560" : d <= 7 ? "#f97316" : "#34e89e"; return (
-                        <div style={{ marginLeft: "auto", fontSize: 10, color: col }}>🗓 Due {fmtDate(card.dueDate)}</div>
+                      {(() => { const nd = getNextDueDate(card.dueDate); const d = getDaysUntil(nd); const col = d <= 3 ? "#e94560" : d <= 7 ? "#f97316" : "#34e89e"; return (
+                        <div style={{ marginLeft: "auto", fontSize: 10, color: col }}>🗓 Due {fmtDate(nd)}</div>
                       ); })()}
                     </div>
                   </>
                 );
               })()}
             </div>
-            {selected?.id === card.id && (
-              <div style={{ borderRadius: "0 0 16px 16px", padding: "14px 16px", marginBottom: 4, background: "#111", border: `1px solid ${card.accent}44`, borderTop: "none" }}>
-                <div style={S.secLabel}>REWARD RATES</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 8, marginBottom: 14 }}>
-                  {Object.entries(card.rewardRate).map(([cat, rate]) => (
-                    <div key={cat} style={{ background: "#1a1a1a", borderRadius: 10, padding: "8px 6px", textAlign: "center" }}>
-                      <div style={{ fontSize: 9, color: "#aaa", textTransform: "capitalize" }}>{cat}</div>
-                      <div style={{ fontSize: 15, fontWeight: 800, color: card.accent }}>{rate}X</div>
-                    </div>
-                  ))}
-                </div>
-                {card.supportsQR && <div style={{ marginBottom: 12, background: "#1a0533", borderRadius: 10, padding: "10px 12px" }}>
-                  <div style={{ fontSize: 10, color: "#888", letterSpacing: 1 }}>UPI ID</div>
-                  <div style={{ fontSize: 13, color: "#c084fc", fontWeight: 700, marginTop: 2 }}>{card.upiId}</div>
-                </div>}
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button onClick={e => { e.stopPropagation(); onEdit(card); }} style={{ flex: 1, padding: "9px", borderRadius: 10, border: "1px solid #4286f4", background: "#0d1a33", color: "#4286f4", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>✏️ Edit</button>
-                  {confirmDelete === card.id
-                    ? <button onClick={e => { e.stopPropagation(); onDelete(card.id); setConfirmDelete(null); }} style={{ flex: 1, padding: "9px", borderRadius: 10, border: "1px solid #e94560", background: "#e94560", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Confirm Delete</button>
-                    : <button onClick={e => { e.stopPropagation(); setConfirmDelete(card.id); }} style={{ flex: 1, padding: "9px", borderRadius: 10, border: "1px solid #333", background: "transparent", color: "#555", fontSize: 12, cursor: "pointer" }}>🗑 Delete</button>
-                  }
-                </div>
-              </div>
-            )}
-          </div>
         ))}
       </div>
+
+      {/* Expand panel — rendered outside the grid to avoid row-height disruption */}
+      {selected && (() => {
+        const card = cards.find(c => c.id === selected.id) || selected;
+        return (
+          <div style={{ borderRadius: 16, padding: "14px 16px", marginTop: 12, background: "#111", border: `1px solid ${card.accent}44` }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{card.name}</div>
+                <div style={{ fontSize: 11, color: "#888" }}>•••• {card.last4} · {card.bank}</div>
+              </div>
+              <button onClick={() => onSelect(null)} style={{ background: "none", border: "none", color: "#555", fontSize: 22, cursor: "pointer", lineHeight: 1 }}>×</button>
+            </div>
+            <div style={S.secLabel}>REWARD RATES</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 8, marginBottom: 14 }}>
+              {Object.entries(card.rewardRate).map(([cat, rate]) => (
+                <div key={cat} style={{ background: "#1a1a1a", borderRadius: 10, padding: "8px 6px", textAlign: "center" }}>
+                  <div style={{ fontSize: 9, color: "#aaa", textTransform: "capitalize" }}>{cat}</div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: card.accent }}>{rate}X</div>
+                </div>
+              ))}
+            </div>
+            {card.supportsQR && (
+              <div style={{ marginBottom: 12, background: "#1a0533", borderRadius: 10, padding: "10px 12px" }}>
+                <div style={{ fontSize: 10, color: "#888", letterSpacing: 1 }}>UPI ID</div>
+                <div style={{ fontSize: 13, color: "#c084fc", fontWeight: 700, marginTop: 2 }}>{card.upiId}</div>
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => onEdit(card)} style={{ flex: 1, padding: "9px", borderRadius: 10, border: "1px solid #4286f4", background: "#0d1a33", color: "#4286f4", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>✏️ Edit</button>
+              {confirmDelete === card.id
+                ? <button onClick={() => { onDelete(card.id); setConfirmDelete(null); }} style={{ flex: 1, padding: "9px", borderRadius: 10, border: "1px solid #e94560", background: "#e94560", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Confirm Delete</button>
+                : <button onClick={() => setConfirmDelete(card.id)} style={{ flex: 1, padding: "9px", borderRadius: 10, border: "1px solid #333", background: "transparent", color: "#555", fontSize: 12, cursor: "pointer" }}>🗑 Delete</button>
+              }
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -1329,7 +1357,7 @@ function BillsTab({ cards, txns, onViewBill, onMarkPaid, onSaveEMI, onDeleteEMI 
 
   if (cards.length === 0) return <div style={{ textAlign: "center", padding: "80px 20px" }}><div style={{ fontSize: 48, marginBottom: 16 }}>🗓️</div><div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>No cards added</div><div style={{ fontSize: 14, color: "#555" }}>Add cards from the Cards tab to track bills</div></div>;
 
-  const sorted = [...cards].sort((a, b) => getDaysUntil(a.dueDate) - getDaysUntil(b.dueDate));
+  const sorted = [...cards].sort((a, b) => getDaysUntil(getNextDueDate(a.dueDate)) - getDaysUntil(getNextDueDate(b.dueDate)));
   const totalDue = cards.reduce((s, c) => s + (c.totalDue || 0), 0);
   const totalMin = cards.reduce((s, c) => s + (c.minDue || 0), 0);
 
@@ -1480,7 +1508,8 @@ function BillsTab({ cards, txns, onViewBill, onMarkPaid, onSaveEMI, onDeleteEMI 
       </div>
 
       {sorted.map((card, i) => {
-        const days = getDaysUntil(card.dueDate);
+        const nextDue = getNextDueDate(card.dueDate);
+        const days = getDaysUntil(nextDue);
         const urgency = days <= 3 ? "#e94560" : days <= 7 ? "#f97316" : "#34e89e";
         const pct = card.limit > 0 ? (card.spent / card.limit) * 100 : 0;
         const isPaid = (card.totalDue || 0) === 0;
@@ -1519,7 +1548,7 @@ function BillsTab({ cards, txns, onViewBill, onMarkPaid, onSaveEMI, onDeleteEMI 
                 <div style={{ width: `${Math.max(0, Math.min(100, (14 - days) / 14 * 100))}%`, height: "100%", background: isPaid ? "#34e89e" : urgency, borderRadius: 2 }} />
               </div>
               <div style={{ fontSize: 11, fontWeight: 700, color: isPaid ? "#34e89e" : urgency, whiteSpace: "nowrap" }}>
-                {isPaid ? "Bill cleared" : days <= 0 ? "OVERDUE!" : days === 1 ? "Due tomorrow" : `Due in ${days}d`} · {fmtDate(card.dueDate)}
+                {isPaid ? "Bill cleared" : days <= 0 ? "OVERDUE!" : days === 1 ? "Due tomorrow" : `Due in ${days}d`} · {fmtDate(nextDue)}
               </div>
             </div>
 
@@ -2710,11 +2739,19 @@ export default function CardIQ() {
     const card = cards.find(c => c.id === cardId);
     if (!card) return;
     const remaining = Math.max(0, (card.totalDue || 0) - amountPaid);
+    // Advance due date to next month's same day
+    let nextDueDate = card.dueDate;
+    if (card.dueDate) {
+      const dueDay = new Date(card.dueDate + "T00:00:00").getDate();
+      const today = new Date();
+      nextDueDate = new Date(today.getFullYear(), today.getMonth() + 1, dueDay).toISOString().slice(0, 10);
+    }
     const updated = {
       ...card,
       totalDue: remaining,
       minDue:   remaining > 0 ? Math.min(card.minDue || 0, remaining) : 0,
       spent:    Math.max(0, (card.spent || 0) - amountPaid),
+      dueDate:  nextDueDate,
     };
     setCards(prev => prev.map(c => c.id === cardId ? updated : c));
     await supabase.from("cards").update({ data: updated }).eq("id", cardId);
