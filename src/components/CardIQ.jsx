@@ -2657,9 +2657,13 @@ export default function CardIQ() {
     if (identity?.bank === "RBL Bank" && billing && (billing.totalDue > 0 || billing.dueDate)) {
       const rblCard = cards.find(c => (c.last4 && identity.last4 && c.last4 === identity.last4 && c.bank === "RBL Bank") || c.bank === "RBL Bank");
       if (rblCard) {
+        // totalDue = statement amount only; spent includes existing unbilled SMS/manual
+        const unbilledAmt = txns
+          .filter(t => t.cardId === rblCard.id && (t.source === "sms" || t.source === "manual") && t.type !== "credit")
+          .reduce((s, t) => s + t.amount, 0);
         const updated = {
           ...rblCard,
-          ...(billing.totalDue > 0 && { totalDue: billing.totalDue, spent: billing.totalDue }),
+          ...(billing.totalDue > 0 && { totalDue: billing.totalDue, spent: billing.totalDue + unbilledAmt }),
           ...(billing.minDue   > 0 && { minDue: billing.minDue }),
           ...(billing.dueDate       && { dueDate: billing.dueDate }),
           ...(billing.stmtDate      && { stmtDate: billing.stmtDate }),
