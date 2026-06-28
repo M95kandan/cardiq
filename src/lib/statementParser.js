@@ -127,28 +127,34 @@ export function parseBillingSummary(lines) {
   // RBL layout: "Total Amount Due `13,907.02 ..." — label then value, take FIRST.
   let totalDue = 0;
 
+  // Scan ALL occurrences of "Total Amount Due" and keep the LARGEST value found.
+  // This handles ICICI multi-card statements where an earlier section shows a smaller
+  // sub-total (e.g. previous balance ₹22,260) before the grand total (₹33,575.44).
   const totalDueLabelRe = /total\s+(?:amount|payment)\s+due|total\s+outstanding(?:\s+(?:amount|balance))?|net\s+(?:amount\s+)?payable/i;
-  for (let i = 0; i < lines.length && !totalDue; i++) {
+  for (let i = 0; i < lines.length; i++) {
     if (!totalDueLabelRe.test(lines[i])) continue;
     const labelMatch  = lines[i].match(totalDueLabelRe);
     const beforeLabel = lines[i].slice(0, labelMatch.index).trim();
     const afterLabel  = lines[i].slice(labelMatch.index + labelMatch[0].length);
     const afterNums   = allNums(afterLabel);
-    if (afterNums.length === 1) { totalDue = afterNums[0]; break; }
-    if (afterNums.length > 1) {
-      // ICICI formula column: "= Total Amount Due" — label is rightmost column header,
-      // all prior column values appear AFTER it in merged text → take last number.
-      // Other banks (RBL): label followed by its value first → take first number.
-      totalDue = /=\s*$/.test(beforeLabel) ? afterNums[afterNums.length - 1] : afterNums[0];
-      break;
+    let candidate = 0;
+    if (afterNums.length === 1) {
+      candidate = afterNums[0];
+    } else if (afterNums.length > 1) {
+      // ICICI formula column header "= Total Amount Due": values from other columns
+      // appear AFTER the label in merged text → take last (rightmost = grand total).
+      // Other banks (RBL): label is standalone, value comes first → take first.
+      candidate = /=\s*$/.test(beforeLabel) ? afterNums[afterNums.length - 1] : afterNums[0];
+    } else {
+      // Case B: value on next 1-3 lines (HDFC multi-col row, SBI standalone)
+      for (let j = i + 1; j <= Math.min(i + 3, lines.length - 1); j++) {
+        const nums = allNums(lines[j]);
+        if (nums.length === 0) continue;
+        candidate = nums[nums.length - 1];
+        break;
+      }
     }
-    // Case B: value on next 1-3 lines (HDFC multi-col row, SBI standalone)
-    for (let j = i + 1; j <= Math.min(i + 3, lines.length - 1); j++) {
-      const nums = allNums(lines[j]);
-      if (nums.length === 0) continue;
-      totalDue = nums[nums.length - 1]; // last = rightmost column = total
-      break;
-    }
+    if (candidate > totalDue) totalDue = candidate; // keep the largest (grand total wins)
   }
 
   // Fallback: scan joined text for "Total Amount Due" with nearby number (ICICI backtick style)
