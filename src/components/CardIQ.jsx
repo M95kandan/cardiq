@@ -1377,11 +1377,15 @@ function BillsTab({ cards, txns, onViewBill, onMarkPaid, onSaveEMI, onDeleteEMI 
   const getUnbilled = (card) => txns.filter(t =>
     t.cardId === card.id && (t.source === "sms" || t.source === "manual") && t.type !== "credit"
   );
-  // Billed due = statement amount only (excludes SMS/manual unbilled txns)
+  // Billed due = statement amount only.
+  // Only subtract source="manual" txns — those were incorrectly added to totalDue
+  // by an old bug. SMS txns (source="sms") were never in totalDue, so don't subtract them.
   const cardBilledDue = Object.fromEntries(
     cards.map(c => {
-      const uAmt = getUnbilled(c).reduce((a, t) => a + t.amount, 0);
-      return [c.id, Math.max(0, (c.totalDue || 0) - uAmt)];
+      const manualAmt = txns
+        .filter(t => t.cardId === c.id && t.source === "manual" && t.type !== "credit")
+        .reduce((a, t) => a + t.amount, 0);
+      return [c.id, Math.max(0, (c.totalDue || 0) - manualAmt)];
     })
   );
   const totalBilledDue = Object.values(cardBilledDue).reduce((s, v) => s + v, 0);
