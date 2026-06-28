@@ -2722,12 +2722,22 @@ export default function CardIQ() {
     const existingUnbilled = txns.filter(t =>
       t.cardId === cardId && (t.source === "sms" || t.source === "manual") && t.type !== "credit"
     );
+    // Existing statement txns — used to prevent re-import duplicates
+    const existingStatement = txns.filter(t =>
+      t.cardId === cardId && t.source === "statement"
+    );
     const matchedIds = new Set(); // IDs of unbilled txns reconciled with this statement
     let mergedCount = 0;
     let addedCount  = 0;
 
     for (const txn of selectedTxns) {
       if (txn.type !== "debit") continue;
+
+      // Skip if an identical statement txn (same date + amount) already exists → re-upload guard
+      const isDuplicate = existingStatement.some(t =>
+        t.date === txn.date && Math.abs(t.amount - txn.amount) < 1
+      );
+      if (isDuplicate) continue;
 
       // Find an unmatched existing unbilled txn with the same amount (within ₹1 rounding)
       const match = existingUnbilled.find(t =>

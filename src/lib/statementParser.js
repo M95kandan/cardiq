@@ -137,20 +137,25 @@ export function parseBillingSummary(lines) {
     const beforeLabel = lines[i].slice(0, labelMatch.index).trim();
     const afterLabel  = lines[i].slice(labelMatch.index + labelMatch[0].length);
     const afterNums   = allNums(afterLabel);
+    // ICICI formula layout: "= Total Amount Due" is the LEFTMOST column.
+    // Its values row is ordered: [total, prev_balance, purchases, payments].
+    // → take FIRST number (leftmost = total due).
+    // HDFC formula layout: "Total Amount Due" is the RIGHTMOST column.
+    // Its values row is ordered: [prev, purchases, payments, total].
+    // → take LAST number (rightmost = total due).
+    // All other banks (RBL, SBI): label is standalone, value immediately follows.
+    // → take FIRST number.
+    const iciciFormula = /=\s*$/.test(beforeLabel); // "= Total Amount Due"
     let candidate = 0;
-    if (afterNums.length === 1) {
+    if (afterNums.length >= 1) {
+      // Value(s) on same line after label — always take first (label's own value comes first)
       candidate = afterNums[0];
-    } else if (afterNums.length > 1) {
-      // ICICI formula column header "= Total Amount Due": values from other columns
-      // appear AFTER the label in merged text → take last (rightmost = grand total).
-      // Other banks (RBL): label is standalone, value comes first → take first.
-      candidate = /=\s*$/.test(beforeLabel) ? afterNums[afterNums.length - 1] : afterNums[0];
     } else {
-      // Case B: value on next 1-3 lines (HDFC multi-col row, SBI standalone)
+      // Case B: value on next 1-3 lines (HDFC multi-col, SBI standalone, ICICI values row)
       for (let j = i + 1; j <= Math.min(i + 3, lines.length - 1); j++) {
         const nums = allNums(lines[j]);
         if (nums.length === 0) continue;
-        candidate = nums[nums.length - 1];
+        candidate = iciciFormula ? nums[0] : nums[nums.length - 1];
         break;
       }
     }
