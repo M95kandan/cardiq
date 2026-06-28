@@ -324,6 +324,7 @@ function AddTxnModal({ cards, onAdd, onClose }) {
   const [amt, setAmt] = useState("");
   const [merch, setMerch] = useState("");
   const [type, setType] = useState("card");
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
 
   const catIcons = { Dining: "🍽️", Travel: "✈️", Fuel: "⛽", Shopping: "🛍️", Entertainment: "🎬", "Online Shopping": "📦", Groceries: "🛒", Other: "💸" };
 
@@ -333,7 +334,7 @@ function AddTxnModal({ cards, onAdd, onClose }) {
     const key = categoryRewardKey[cat] || "other";
     const rate = card.rewardRate[key] || 1;
     const pts = Math.floor((parseFloat(amt) / 100) * rate);
-    onAdd({ cardId: sel, merchant: merch, category: cat, amount: parseFloat(amt), type, icon: catIcons[cat] || "💸", points: pts });
+    onAdd({ cardId: sel, merchant: merch, category: cat, amount: parseFloat(amt), type, date, icon: catIcons[cat] || "💸", points: pts });
     onClose();
   };
 
@@ -376,8 +377,16 @@ function AddTxnModal({ cards, onAdd, onClose }) {
           ))}
         </div>
 
-        <div style={ST.label}>AMOUNT (₹)</div>
-        <input type="number" value={amt} onChange={e => setAmt(e.target.value)} placeholder="0" style={{ ...ST.input, marginBottom: 16 }} />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 0 }}>
+          <div>
+            <div style={ST.label}>AMOUNT (₹)</div>
+            <input type="number" value={amt} onChange={e => setAmt(e.target.value)} placeholder="0" style={{ ...ST.input, marginBottom: 16 }} />
+          </div>
+          <div>
+            <div style={ST.label}>DATE</div>
+            <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{ ...ST.input, marginBottom: 16, colorScheme: "dark" }} />
+          </div>
+        </div>
 
         <button onClick={handleAdd} style={M.btn}>Add Transaction</button>
         <button onClick={onClose} style={M.ghost}>Cancel</button>
@@ -999,6 +1008,24 @@ function parseTxnMonth(dateStr) {
 function txnInMonth(t, selMonth) {
   const m = parseTxnMonth(t.date);
   return m && m.year === selMonth.year && m.month === selMonth.month;
+}
+function parseTxnDate(dateStr) {
+  if (!dateStr) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return new Date(dateStr + "T00:00:00");
+  const M = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+  const m1 = dateStr.match(/(\d{1,2})[\s\-]([A-Za-z]{3})[\s\-,]\s*'?(\d{2,4})/);
+  if (m1) { const mon=M[m1[2].toLowerCase()]; if(mon!==undefined) return new Date(m1[3].length===2?2000+parseInt(m1[3]):+m1[3], mon, +m1[1]); }
+  const m2 = dateStr.match(/([A-Za-z]{3})\s+(\d{1,2}),?\s*(\d{4})/);
+  if (m2) { const mon=M[m2[1].toLowerCase()]; if(mon!==undefined) return new Date(+m2[3], mon, +m2[2]); }
+  const m3 = dateStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (m3) return new Date(+m3[3], +m3[2]-1, +m3[1]);
+  const d = new Date(dateStr); return isNaN(d) ? null : d;
+}
+function txnInRange(t, from, to) {
+  const d = parseTxnDate(t.date);
+  if (!d) return false;
+  const f = new Date(from + "T00:00:00"), e = new Date(to + "T23:59:59");
+  return d >= f && d <= e;
 }
 function MonthPicker({ selMonth, onChange }) {
   const now = new Date();
@@ -1930,16 +1957,31 @@ function BudgetTab({ txns, cards }) {
 
 // ─── TRANSACTIONS TAB ─────────────────────────────────────────────────────────
 function TransactionsTab({ txns, cards, onAdd, onUploadStatement, onAddFromSMS }) {
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter]   = useState("all");
+  const [viewMode, setViewMode] = useState("month"); // "month" | "range"
   const [selMonth, setSelMonth] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
-  const monthTxns = txns.filter(t => txnInMonth(t, selMonth));
-  const filtered = filter === "all" ? monthTxns : filter === "qr" ? monthTxns.filter(t => t.type === "qr") : monthTxns.filter(t => t.cardId === filter);
+  const [rangeFrom, setRangeFrom] = useState(() => {
+    const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10);
+  });
+  const [rangeTo, setRangeTo] = useState(() => new Date().toISOString().slice(0, 10));
+
+  // Exclude payment records from transaction list
+  const spendTxns = txns.filter(t => t.source !== "payment");
+
+  const baseTxns = viewMode === "month"
+    ? spendTxns.filter(t => txnInMonth(t, selMonth))
+    : spendTxns.filter(t => txnInRange(t, rangeFrom, rangeTo));
+
+  const filtered = filter === "all" ? baseTxns
+    : filter === "qr" ? baseTxns.filter(t => t.type === "qr")
+    : baseTxns.filter(t => t.cardId === filter);
+
   const totalSpent = filtered.filter(t => t.type !== "credit").reduce((s, t) => s + t.amount, 0);
-  const totalPts = filtered.reduce((s, t) => s + (t.points || 0), 0);
+  const totalPts   = filtered.reduce((s, t) => s + (t.points || 0), 0);
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, marginTop: 4, gap: 8, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, marginTop: 4, gap: 8, flexWrap: "wrap" }}>
         <div style={S.secLabel}>TRANSACTIONS</div>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={onUploadStatement} style={{ background: "#1a1a2e", border: "1px solid #c084fc", color: "#c084fc", borderRadius: 12, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>📄 Statement</button>
@@ -1948,10 +1990,37 @@ function TransactionsTab({ txns, cards, onAdd, onUploadStatement, onAddFromSMS }
         </div>
       </div>
 
-      <MonthPicker selMonth={selMonth} onChange={m => { setSelMonth(m); setFilter("all"); }} />
+      {/* View mode toggle */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        {[["month", "📅 By Month"], ["range", "📆 Date Range"]].map(([v, l]) => (
+          <button key={v} onClick={() => setViewMode(v)}
+            style={{ flex: 1, padding: "8px", borderRadius: 12, border: `1px solid ${viewMode === v ? "#4286f4" : "#2a2a2a"}`, background: viewMode === v ? "#0d1a33" : "transparent", color: viewMode === v ? "#4286f4" : "#555", fontSize: 12, fontWeight: viewMode === v ? 700 : 400, cursor: "pointer" }}>
+            {l}
+          </button>
+        ))}
+      </div>
 
+      {/* Month picker OR date range inputs */}
+      {viewMode === "month" ? (
+        <MonthPicker selMonth={selMonth} onChange={m => { setSelMonth(m); setFilter("all"); }} />
+      ) : (
+        <div style={{ display: "flex", gap: 10, marginBottom: 16, background: "#111", borderRadius: 14, padding: "12px 14px", border: "1px solid #1e1e1e" }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 9, color: "#555", letterSpacing: 1, marginBottom: 5 }}>FROM</div>
+            <input type="date" value={rangeFrom} onChange={e => setRangeFrom(e.target.value)}
+              style={{ ...ST.input, padding: "8px 10px", fontSize: 13, colorScheme: "dark" }} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 9, color: "#555", letterSpacing: 1, marginBottom: 5 }}>TO</div>
+            <input type="date" value={rangeTo} onChange={e => setRangeTo(e.target.value)}
+              style={{ ...ST.input, padding: "8px 10px", fontSize: 13, colorScheme: "dark" }} />
+          </div>
+        </div>
+      )}
+
+      {/* Summary stats */}
       <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
-        {[[fmtCurrency(totalSpent), "#e94560", "SPENT"], [totalPts.toLocaleString(), "#34e89e", "POINTS EARNED"], [monthTxns.filter(t => t.type === "qr").length + "", "#c084fc", "QR TXNs"]].map(([v, c, l]) => (
+        {[[fmtCurrency(totalSpent), "#e94560", "SPENT"], [totalPts.toLocaleString(), "#34e89e", "POINTS EARNED"], [filtered.length + "", "#4286f4", "TXNs"]].map(([v, c, l]) => (
           <div key={l} style={{ flex: 1, background: "#111", borderRadius: 14, padding: "12px 10px", border: "1px solid #1e1e1e", textAlign: "center" }}>
             <div style={{ fontSize: 16, fontWeight: 800, color: c }}>{v}</div>
             <div style={{ fontSize: 9, color: "#555", marginTop: 4, letterSpacing: 1 }}>{l}</div>
@@ -1959,6 +2028,7 @@ function TransactionsTab({ txns, cards, onAdd, onUploadStatement, onAddFromSMS }
         ))}
       </div>
 
+      {/* Card/type filter pills */}
       <div style={{ display: "flex", gap: 7, marginBottom: 14, overflowX: "auto", paddingBottom: 4 }}>
         {[["all", "All"], ["qr", "QR/UPI"], ...cards.map(c => [c.id, c.bank + " " + c.last4])].map(([v, l]) => (
           <button key={v} onClick={() => setFilter(v)}
@@ -1966,10 +2036,12 @@ function TransactionsTab({ txns, cards, onAdd, onUploadStatement, onAddFromSMS }
         ))}
       </div>
 
+      {/* Transaction list */}
       {filtered.map((txn, i) => {
         const card = cards.find(c => c.id === txn.cardId);
+        const isUnbilled = txn.source === "sms" || txn.source === "manual";
         return (
-          <div key={txn.id} style={{ background: "#111", borderRadius: 14, padding: "13px 15px", marginBottom: 8, border: "1px solid #1e1e1e", display: "flex", alignItems: "center", gap: 12, animation: `slideUp 0.3s ease ${Math.min(i, 8) * 40}ms both` }}>
+          <div key={txn.id} style={{ background: "#111", borderRadius: 14, padding: "13px 15px", marginBottom: 8, border: `1px solid ${isUnbilled ? "#2a1a3a" : "#1e1e1e"}`, display: "flex", alignItems: "center", gap: 12, animation: `slideUp 0.3s ease ${Math.min(i, 8) * 40}ms both` }}>
             <div style={{ width: 42, height: 42, borderRadius: 12, background: `linear-gradient(135deg,${card?.color[0] || "#111"},${card?.color[1] || "#333"})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>
               {txn.icon}
             </div>
@@ -1978,17 +2050,25 @@ function TransactionsTab({ txns, cards, onAdd, onUploadStatement, onAddFromSMS }
               <div style={{ fontSize: 11, color: "#666", marginTop: 2 }}>
                 {txn.category} · {txn.date}
                 {txn.type === "qr" && <span style={{ color: "#c084fc", marginLeft: 6 }}>⬛ QR</span>}
+                {isUnbilled && <span style={{ color: "#c084fc", marginLeft: 6, fontSize: 10 }}>⏳ unbilled</span>}
               </div>
               <div style={{ fontSize: 11, color: "#888", marginTop: 1 }}>{card?.name} •••• {card?.last4}</div>
             </div>
             <div style={{ textAlign: "right", flexShrink: 0 }}>
-              <div style={{ fontWeight: 800, color: "#fff", fontSize: 15 }}>₹{txn.amount.toLocaleString()}</div>
+              <div style={{ fontWeight: 800, color: txn.type === "credit" ? "#34e89e" : "#fff", fontSize: 15 }}>
+                {txn.type === "credit" ? "+" : ""}₹{txn.amount.toLocaleString()}
+              </div>
               <div style={{ fontSize: 11, color: card?.accent || "#34e89e", marginTop: 2 }}>+{txn.points || 0} pts</div>
             </div>
           </div>
         );
       })}
-      {filtered.length === 0 && <div style={{ textAlign: "center", color: "#555", fontSize: 14, padding: "60px 0" }}>No transactions found</div>}
+      {filtered.length === 0 && (
+        <div style={{ textAlign: "center", color: "#555", fontSize: 14, padding: "60px 0" }}>
+          <div style={{ fontSize: 36, marginBottom: 12 }}>📋</div>
+          No transactions found
+        </div>
+      )}
     </div>
   );
 }
@@ -2201,9 +2281,10 @@ export default function CardIQ() {
   };
 
   const handleAddTxn = async (txn) => {
-    const today = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+    // Always store as ISO YYYY-MM-DD so parseTxnMonth can parse correctly
+    const txnDate = txn.date || new Date().toISOString().slice(0, 10);
     const updatedCard = cards.find(c => c.id === txn.cardId);
-    if (updatedCard) {
+    if (updatedCard && txn.type !== "credit") {
       const newCard = {
         ...updatedCard,
         spent:    updatedCard.spent    + txn.amount,
@@ -2215,10 +2296,10 @@ export default function CardIQ() {
       const { id, ...cardData } = newCard;
       supabase.from("cards").update({ data: cardData }).eq("id", id);
     }
-    const { cardId, id: _id, ...txnData } = txn;
+    const { cardId, id: _id, date: _date, ...txnData } = txn;
     const { data: rows } = await supabase
       .from("transactions")
-      .insert({ user_id: userId, card_id: cardId, data: { ...txnData, date: today, source: "manual" } })
+      .insert({ user_id: userId, card_id: cardId, data: { ...txnData, date: txnDate, source: "manual" } })
       .select("id, card_id, data");
     if (rows?.[0]) {
       const r = rows[0];
