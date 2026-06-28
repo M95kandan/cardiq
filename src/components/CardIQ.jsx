@@ -1372,12 +1372,19 @@ function BillsTab({ cards, txns, onViewBill, onMarkPaid, onSaveEMI, onDeleteEMI 
   if (cards.length === 0) return <div style={{ textAlign: "center", padding: "80px 20px" }}><div style={{ fontSize: 48, marginBottom: 16 }}>🗓️</div><div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>No cards added</div><div style={{ fontSize: 14, color: "#555" }}>Add cards from the Cards tab to track bills</div></div>;
 
   const sorted = [...cards].sort((a, b) => getDaysUntil(getNextDueDate(a.dueDate)) - getDaysUntil(getNextDueDate(b.dueDate)));
-  const totalDue = cards.reduce((s, c) => s + (c.totalDue || 0), 0);
   const totalMin = cards.reduce((s, c) => s + (c.minDue || 0), 0);
 
   const getUnbilled = (card) => txns.filter(t =>
     t.cardId === card.id && (t.source === "sms" || t.source === "manual") && t.type !== "credit"
   );
+  // Billed due = statement amount only (excludes SMS/manual unbilled txns)
+  const cardBilledDue = Object.fromEntries(
+    cards.map(c => {
+      const uAmt = getUnbilled(c).reduce((a, t) => a + t.amount, 0);
+      return [c.id, Math.max(0, (c.totalDue || 0) - uAmt)];
+    })
+  );
+  const totalBilledDue = Object.values(cardBilledDue).reduce((s, v) => s + v, 0);
   const totalUpcoming    = cards.reduce((s, c) => s + getUnbilled(c).reduce((a, t) => a + t.amount, 0), 0);
   const getMonthTxns     = (card) => txns.filter(t => t.cardId === card.id && t.type !== "credit" && t.source !== "payment" && txnInMonth(t, selMonth));
   const getMonthPayments = (month) => txns.filter(t => t.source === "payment" && txnInMonth(t, month));
@@ -1507,7 +1514,7 @@ function BillsTab({ cards, txns, onViewBill, onMarkPaid, onSaveEMI, onDeleteEMI 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
             <div style={{ fontSize: 10, color: "#555", letterSpacing: 1 }}>TOTAL OUTSTANDING</div>
-            <div style={{ fontSize: 28, fontWeight: 900, color: "#e94560", marginTop: 4 }}>{fmtCurrency(totalDue)}</div>
+            <div style={{ fontSize: 28, fontWeight: 900, color: "#e94560", marginTop: 4 }}>{fmtCurrency(totalBilledDue)}</div>
           </div>
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 10, color: "#555", letterSpacing: 1 }}>MIN TOTAL DUE</div>
@@ -1517,7 +1524,7 @@ function BillsTab({ cards, txns, onViewBill, onMarkPaid, onSaveEMI, onDeleteEMI 
         <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
           <div style={{ flex: 1, background: "rgba(233,69,96,0.08)", borderRadius: 12, padding: "10px 12px", textAlign: "center" }}>
             <div style={{ fontSize: 10, color: "#e94560" }}>PAY FULL BALANCE</div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginTop: 4 }}>{fmtCurrency(totalDue)}</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginTop: 4 }}>{fmtCurrency(totalBilledDue)}</div>
           </div>
           <div style={{ flex: 1, background: "rgba(249,115,22,0.08)", borderRadius: 12, padding: "10px 12px", textAlign: "center" }}>
             <div style={{ fontSize: 10, color: "#f97316" }}>MINIMUM PAYMENT</div>
@@ -1533,7 +1540,7 @@ function BillsTab({ cards, txns, onViewBill, onMarkPaid, onSaveEMI, onDeleteEMI 
       </div>
 
       {sorted.filter(card => {
-        if (billViewFilter === "billed")   return (card.totalDue || 0) > 0;
+        if (billViewFilter === "billed")   return cardBilledDue[card.id] > 0;
         if (billViewFilter === "unbilled") return txns.some(t => t.cardId === card.id && (t.source === "sms" || t.source === "manual") && t.type !== "credit");
         return true;
       }).map((card, i) => {
@@ -1541,9 +1548,10 @@ function BillsTab({ cards, txns, onViewBill, onMarkPaid, onSaveEMI, onDeleteEMI 
         const days = getDaysUntil(nextDue);
         const urgency = days <= 3 ? "#e94560" : days <= 7 ? "#f97316" : "#34e89e";
         const pct = card.limit > 0 ? (card.spent / card.limit) * 100 : 0;
-        const isPaid = (card.totalDue || 0) === 0;
         const unbilledTxns = getUnbilled(card);
         const unbilledAmt  = unbilledTxns.reduce((s, t) => s + t.amount, 0);
+        const billedDue    = cardBilledDue[card.id] ?? Math.max(0, (card.totalDue || 0) - unbilledAmt);
+        const isPaid = billedDue === 0;
         return (
           <div key={card.id}
             style={{ background: "#111", borderRadius: 16, padding: "16px", marginBottom: 10, border: `1px solid ${isPaid ? "#1e3a1e" : days <= 3 ? "#e94560" : days <= 7 ? "#f97316" : "#1e1e1e"}`, animation: `slideUp 0.35s ease ${i * 80}ms both` }}>
@@ -1556,8 +1564,8 @@ function BillsTab({ cards, txns, onViewBill, onMarkPaid, onSaveEMI, onDeleteEMI 
                 </div>
               </div>
               <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 20, fontWeight: 800, color: isPaid ? "#34e89e" : "#e94560" }}>{isPaid ? "✓ Paid" : fmtCurrency(card.totalDue)}</div>
-                <div style={{ fontSize: 10, color: "#666", marginTop: 2 }}>{isPaid ? "cleared" : "total due"}</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: isPaid ? "#34e89e" : "#e94560" }}>{isPaid ? "✓ Paid" : fmtCurrency(billedDue)}</div>
+                <div style={{ fontSize: 10, color: "#666", marginTop: 2 }}>{isPaid ? "cleared" : "billed due"}</div>
               </div>
             </div>
 
