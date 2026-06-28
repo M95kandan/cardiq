@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 import { CARD_DB, searchCards } from "../data/creditCards";
 import { extractPDFLines, parseTransactions as parsePDFTxns, categoryIcon, parseBillingSummary, parseCardIdentity } from "../lib/statementParser";
@@ -883,6 +883,12 @@ function SidebarNav({ activeTab, setActiveTab, cards, onSignOut }) {
 // ─── CARDS TAB ────────────────────────────────────────────────────────────────
 function CardsTab({ cards, txns, onSelect, selected, onQRPay, onAdd, onEdit, onDelete, isDesktop }) {
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
+
+  const toggleExpand = (card) => {
+    setExpandedId(prev => prev === card.id ? null : card.id);
+    onSelect(selected?.id === card.id ? null : card); // keep main-app state in sync
+  };
 
   if (cards.length === 0) return (
     <div style={{ textAlign: "center", padding: "80px 20px" }}>
@@ -901,12 +907,13 @@ function CardsTab({ cards, txns, onSelect, selected, onQRPay, onAdd, onEdit, onD
       </div>
       <div style={{ display: "grid", gridTemplateColumns: isDesktop ? "repeat(2, 1fr)" : "1fr", gap: 12 }}>
         {cards.map((card, i) => (
-          <div key={card.id}
-            onClick={() => onSelect(selected?.id === card.id ? null : card)}
+          <React.Fragment key={card.id}>
+          <div
+            onClick={() => toggleExpand(card)}
             style={{
               background: `linear-gradient(135deg,${card.color[0]},${card.color[1]})`,
               borderRadius: 20, padding: "18px 20px", cursor: "pointer",
-              border: selected?.id === card.id ? `2px solid ${card.accent}` : "2px solid transparent",
+              border: expandedId === card.id ? `2px solid ${card.accent}` : "2px solid transparent",
               animation: `slideUp 0.4s ease ${i * 60}ms both`, transition: "transform 0.2s",
             }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -968,46 +975,42 @@ function CardsTab({ cards, txns, onSelect, selected, onQRPay, onAdd, onEdit, onD
                 );
               })()}
             </div>
-        ))}
-      </div>
-
-      {/* Expand panel — rendered outside the grid to avoid row-height disruption */}
-      {selected && (() => {
-        const card = cards.find(c => c.id === selected.id) || selected;
-        return (
-          <div style={{ borderRadius: 16, padding: "14px 16px", marginTop: 12, background: "#111", border: `1px solid ${card.accent}44` }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{card.name}</div>
-                <div style={{ fontSize: 11, color: "#888" }}>•••• {card.last4} · {card.bank}</div>
-              </div>
-              <button onClick={() => onSelect(null)} style={{ background: "none", border: "none", color: "#555", fontSize: 22, cursor: "pointer", lineHeight: 1 }}>×</button>
-            </div>
-            <div style={S.secLabel}>REWARD RATES</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 8, marginBottom: 14 }}>
-              {Object.entries(card.rewardRate).map(([cat, rate]) => (
-                <div key={cat} style={{ background: "#1a1a1a", borderRadius: 10, padding: "8px 6px", textAlign: "center" }}>
-                  <div style={{ fontSize: 9, color: "#aaa", textTransform: "capitalize" }}>{cat}</div>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: card.accent }}>{rate}X</div>
+            {expandedId === card.id && (
+              <div style={{ gridColumn: "1 / -1", borderRadius: 16, padding: "14px 16px", background: "#111", border: `1px solid ${card.accent}44`, marginTop: -4 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{card.name}</div>
+                    <div style={{ fontSize: 11, color: "#888" }}>•••• {card.last4} · {card.bank}</div>
+                  </div>
+                  <button onClick={e => { e.stopPropagation(); setExpandedId(null); onSelect(null); }} style={{ background: "none", border: "none", color: "#555", fontSize: 22, cursor: "pointer", lineHeight: 1 }}>×</button>
                 </div>
-              ))}
-            </div>
-            {card.supportsQR && (
-              <div style={{ marginBottom: 12, background: "#1a0533", borderRadius: 10, padding: "10px 12px" }}>
-                <div style={{ fontSize: 10, color: "#888", letterSpacing: 1 }}>UPI ID</div>
-                <div style={{ fontSize: 13, color: "#c084fc", fontWeight: 700, marginTop: 2 }}>{card.upiId}</div>
+                <div style={S.secLabel}>REWARD RATES</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 8, marginBottom: 14 }}>
+                  {Object.entries(card.rewardRate).map(([cat, rate]) => (
+                    <div key={cat} style={{ background: "#1a1a1a", borderRadius: 10, padding: "8px 6px", textAlign: "center" }}>
+                      <div style={{ fontSize: 9, color: "#aaa", textTransform: "capitalize" }}>{cat}</div>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: card.accent }}>{rate}X</div>
+                    </div>
+                  ))}
+                </div>
+                {card.supportsQR && (
+                  <div style={{ marginBottom: 12, background: "#1a0533", borderRadius: 10, padding: "10px 12px" }}>
+                    <div style={{ fontSize: 10, color: "#888", letterSpacing: 1 }}>UPI ID</div>
+                    <div style={{ fontSize: 13, color: "#c084fc", fontWeight: 700, marginTop: 2 }}>{card.upiId}</div>
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={e => { e.stopPropagation(); onEdit(card); }} style={{ flex: 1, padding: "9px", borderRadius: 10, border: "1px solid #4286f4", background: "#0d1a33", color: "#4286f4", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>✏️ Edit</button>
+                  {confirmDelete === card.id
+                    ? <button onClick={e => { e.stopPropagation(); onDelete(card.id); setConfirmDelete(null); }} style={{ flex: 1, padding: "9px", borderRadius: 10, border: "1px solid #e94560", background: "#e94560", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Confirm Delete</button>
+                    : <button onClick={e => { e.stopPropagation(); setConfirmDelete(card.id); }} style={{ flex: 1, padding: "9px", borderRadius: 10, border: "1px solid #333", background: "transparent", color: "#555", fontSize: 12, cursor: "pointer" }}>🗑 Delete</button>
+                  }
+                </div>
               </div>
             )}
-            <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={() => onEdit(card)} style={{ flex: 1, padding: "9px", borderRadius: 10, border: "1px solid #4286f4", background: "#0d1a33", color: "#4286f4", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>✏️ Edit</button>
-              {confirmDelete === card.id
-                ? <button onClick={() => { onDelete(card.id); setConfirmDelete(null); }} style={{ flex: 1, padding: "9px", borderRadius: 10, border: "1px solid #e94560", background: "#e94560", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Confirm Delete</button>
-                : <button onClick={() => setConfirmDelete(card.id)} style={{ flex: 1, padding: "9px", borderRadius: 10, border: "1px solid #333", background: "transparent", color: "#555", fontSize: 12, cursor: "pointer" }}>🗑 Delete</button>
-              }
-            </div>
-          </div>
-        );
-      })()}
+          </React.Fragment>
+        ))}
+      </div>
     </div>
   );
 }
@@ -2151,7 +2154,8 @@ function BudgetTab({ txns, cards }) {
 
 // ─── TRANSACTIONS TAB ─────────────────────────────────────────────────────────
 function TransactionsTab({ txns, cards, onAdd, onUploadStatement, onAddFromSMS }) {
-  const [filter, setFilter]   = useState("all");
+  const [filter, setFilter]     = useState("all");
+  const [billFilter, setBillFilter] = useState("all"); // "all" | "billed" | "unbilled"
   const [viewMode, setViewMode] = useState("month"); // "month" | "range"
   const [selMonth, setSelMonth] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
   const [rangeFrom, setRangeFrom] = useState(() => {
@@ -2166,9 +2170,15 @@ function TransactionsTab({ txns, cards, onAdd, onUploadStatement, onAddFromSMS }
     ? spendTxns.filter(t => txnInMonth(t, selMonth))
     : spendTxns.filter(t => txnInRange(t, rangeFrom, rangeTo));
 
-  const filtered = filter === "all" ? baseTxns
-    : filter === "qr" ? baseTxns.filter(t => t.type === "qr")
-    : baseTxns.filter(t => t.cardId === filter);
+  const billFiltered = billFilter === "billed"
+    ? baseTxns.filter(t => t.source === "statement")
+    : billFilter === "unbilled"
+    ? baseTxns.filter(t => t.source === "sms" || t.source === "manual")
+    : baseTxns;
+
+  const filtered = filter === "all" ? billFiltered
+    : filter === "qr" ? billFiltered.filter(t => t.type === "qr")
+    : billFiltered.filter(t => t.cardId === filter);
 
   const totalSpent = filtered.filter(t => t.type !== "credit").reduce((s, t) => s + t.amount, 0);
   const totalPts   = filtered.reduce((s, t) => s + (t.points || 0), 0);
@@ -2185,13 +2195,25 @@ function TransactionsTab({ txns, cards, onAdd, onUploadStatement, onAddFromSMS }
       </div>
 
       {/* View mode toggle */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
         {[["month", "📅 By Month"], ["range", "📆 Date Range"]].map(([v, l]) => (
           <button key={v} onClick={() => setViewMode(v)}
             style={{ flex: 1, padding: "8px", borderRadius: 12, border: `1px solid ${viewMode === v ? "#4286f4" : "#2a2a2a"}`, background: viewMode === v ? "#0d1a33" : "transparent", color: viewMode === v ? "#4286f4" : "#555", fontSize: 12, fontWeight: viewMode === v ? 700 : 400, cursor: "pointer" }}>
             {l}
           </button>
         ))}
+      </div>
+
+      {/* Billed / Unbilled filter */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+        {[["all", "All"], ["billed", "✅ Billed"], ["unbilled", "⏳ Unbilled"]].map(([v, l]) => {
+          const active = billFilter === v;
+          return (
+            <button key={v} onClick={() => setBillFilter(v)} style={{ padding: "5px 12px", borderRadius: 20, border: `1px solid ${active ? (v === "unbilled" ? "#c084fc" : v === "billed" ? "#34e89e" : "#4286f4") : "#2a2a2a"}`, background: active ? (v === "unbilled" ? "#1a0533" : v === "billed" ? "#0a2a1a" : "#0d1a33") : "transparent", color: active ? (v === "unbilled" ? "#c084fc" : v === "billed" ? "#34e89e" : "#4286f4") : "#555", fontSize: 11, fontWeight: active ? 700 : 400, cursor: "pointer" }}>
+              {l}
+            </button>
+          );
+        })}
       </div>
 
       {/* Month picker OR date range inputs */}

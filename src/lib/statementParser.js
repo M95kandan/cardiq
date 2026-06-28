@@ -201,7 +201,7 @@ export function detectCategory(desc) {
   const d = desc.toLowerCase();
   if (/swiggy|zomato|ubereat|food|restaurant|cafe|kfc|mcdon|domino|pizza|burger|dineout/.test(d)) return "Dining";
   if (/uber(?!eat)|ola|rapido|irctc|indigo|spicejet|air.*india|airline|flight|metro|railway|redbus/.test(d)) return "Travel";
-  if (/hpcl|bpcl|iocl|petrol|fuel|shell|essar|nayara/.test(d)) return "Fuel";
+  if (/hpcl|bpcl|iocl|petrol|fuel|shell|essar|nayara|surcharge/.test(d)) return "Fuel";
   if (/amazon|flipkart|myntra|ajio|nykaa|meesho|snapdeal|shopclues/.test(d)) return "Online Shopping";
   if (/bigbasket|zepto|blinkit|dunzo|grofer|dmart|reliance fresh|more super|jiomart/.test(d)) return "Groceries";
   if (/netflix|hotstar|amazon prime|zee5|sony|bookmyshow|pvr|inox|movie|ott/.test(d)) return "Entertainment";
@@ -301,7 +301,7 @@ export function parseTransactions(lines) {
     if (/^(debit|credit)$/i.test(description)) continue;
     // Skip descriptions that are just a date label (e.g. "- 21 Jan", "02 Feb")
     if (/^-?\s*\d{1,2}\s+[A-Za-z]{3}\s*$/.test(description)) continue;
-    if (/opening balance|closing balance|payment received|payment credit|surcharge waiver|fuel surcharge|petrol surcharge|transactions for|minimum amount due|finance charge|late payment fee|emi interest|emi instalment|emi principal|goods.{0,5}service.{0,5}tax|\b[CSI]?GST\b|stpl emi|dial for cash|\btax\b|service charge|annual fee|joining fee|renewal fee|overlimit fee|cheque bounce|cash advance fee|processing fee|insurance premium|\bloan\b|loan repayment|loan instalment|loan emi|instaloan/i.test(description)) continue;
+    if (/opening balance|closing balance|payment received|payment credit|surcharge waiver|transactions for|minimum amount due|finance charge|late payment fee|emi interest|emi instalment|emi principal|goods.{0,5}service.{0,5}tax|\b[CSI]?GST\b|stpl emi|dial for cash|\btax\b|service charge|annual fee|joining fee|renewal fee|overlimit fee|cheque bounce|cash advance fee|processing fee|insurance premium|\bloan\b|loan repayment|loan instalment|loan emi|instaloan/i.test(description)) continue;
 
     const category = detectCategory(description);
     results.push({
