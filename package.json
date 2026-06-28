@@ -15,6 +15,7 @@
     "pdfjs-dist": "^5.7.284",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-router-dom": "^7.18.0",
     "recharts": "^3.8.1"
   },
   "devDependencies": {

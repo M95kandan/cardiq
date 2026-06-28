@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { CARD_DB, searchCards } from "../data/creditCards";
 import { extractPDFLines, parseTransactions as parsePDFTxns, categoryIcon, parseBillingSummary, parseCardIdentity } from "../lib/statementParser";
@@ -32,8 +33,14 @@ const categoryRewardKey = {
   Entertainment: "shopping", "Online Shopping": "shopping", Groceries: "other", Other: "other",
 };
 
-const tabs = ["Cards", "Smart Pay", "Bills", "Transactions", "Insights", "Budget"];
-const tabIcons = ["💳", "🧠", "🗓️", "📋", "📊", "🎯"];
+const TABS = [
+  { path: "/home",         label: "Cards",        icon: "💳" },
+  { path: "/smartpay",     label: "Smart Pay",    icon: "🧠" },
+  { path: "/bills",        label: "Bills",        icon: "🗓️" },
+  { path: "/transactions", label: "Transactions", icon: "📋" },
+  { path: "/insights",     label: "Insights",     icon: "📊" },
+  { path: "/budget",       label: "Budget",       icon: "🎯" },
+];
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 function getBestCard(category, amount, txnType = "card", cards) {
@@ -824,7 +831,7 @@ function AddEditCardModal({ card, onSave, onClose, communityCards = [], onSubmit
 }
 
 // ─── SIDEBAR NAV (desktop) ────────────────────────────────────────────────────
-function SidebarNav({ activeTab, setActiveTab, cards, onSignOut }) {
+function SidebarNav({ activePath, navigate, cards, onSignOut }) {
   const totalLimit = cards.reduce((s, c) => s + c.limit, 0);
   const totalSpent = cards.reduce((s, c) => s + c.spent, 0);
   const util = totalLimit > 0 ? ((totalSpent / totalLimit) * 100).toFixed(0) : 0;
@@ -846,23 +853,26 @@ function SidebarNav({ activeTab, setActiveTab, cards, onSignOut }) {
         </div>
       )}
 
-      {tabs.map((tab, i) => (
-        <button key={tab} onClick={() => setActiveTab(i)} style={{
-          display: "flex", alignItems: "center", gap: 12, padding: "11px 14px",
-          borderRadius: 12, border: "none", cursor: "pointer", textAlign: "left", width: "100%",
-          background: activeTab === i ? "#1a1a1a" : "transparent",
-          color: activeTab === i ? "#fff" : "#666",
-          fontWeight: activeTab === i ? 700 : 400,
-          fontSize: 14, transition: "all 0.15s",
-        }}
-          onMouseEnter={e => { if (activeTab !== i) e.currentTarget.style.background = "#111"; e.currentTarget.style.color = "#aaa"; }}
-          onMouseLeave={e => { if (activeTab !== i) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#666"; } }}
-        >
-          <span style={{ fontSize: 18 }}>{tabIcons[i]}</span>
-          <span>{tab}</span>
-          {activeTab === i && <div style={{ marginLeft: "auto", width: 4, height: 4, borderRadius: "50%", background: "#4286f4" }} />}
-        </button>
-      ))}
+      {TABS.map(({ path, label, icon }) => {
+        const active = activePath === path;
+        return (
+          <button key={path} onClick={() => navigate(path)} style={{
+            display: "flex", alignItems: "center", gap: 12, padding: "11px 14px",
+            borderRadius: 12, border: "none", cursor: "pointer", textAlign: "left", width: "100%",
+            background: active ? "#1a1a1a" : "transparent",
+            color: active ? "#fff" : "#666",
+            fontWeight: active ? 700 : 400,
+            fontSize: 14, transition: "all 0.15s",
+          }}
+            onMouseEnter={e => { if (!active) { e.currentTarget.style.background = "#111"; e.currentTarget.style.color = "#aaa"; } }}
+            onMouseLeave={e => { if (!active) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#666"; } }}
+          >
+            <span style={{ fontSize: 18 }}>{icon}</span>
+            <span>{label}</span>
+            {active && <div style={{ marginLeft: "auto", width: 4, height: 4, borderRadius: "50%", background: "#4286f4" }} />}
+          </button>
+        );
+      })}
 
       <div style={{ flex: 1 }} />
 
@@ -2423,6 +2433,16 @@ function InsightsTab({ cards, txns, totalLimit, totalSpent, totalAvailable }) {
 export default function CardIQ() {
   const width = useWindowWidth();
   const isDesktop = width >= 900;
+  const navigate  = useNavigate();
+  const { pathname } = useLocation();
+
+  // Redirect / → /home
+  useEffect(() => { if (pathname === "/") navigate("/home", { replace: true }); }, [pathname]);
+
+  // Derive active tab index from URL path
+  const activeTabIdx = Math.max(0, TABS.findIndex(t => t.path === pathname));
+  const activePath   = TABS[activeTabIdx].path;
+  const setTab = (path) => navigate(path);
 
   const [cards, setCards]     = useState([]);
   const [txns, setTxns]       = useState([]);
@@ -2431,7 +2451,6 @@ export default function CardIQ() {
   const [communityCards, setCommunityCards] = useState([]);
   const [showSubmitCard, setShowSubmitCard] = useState(false);
   const [submitCardName, setSubmitCardName] = useState("");
-  const [activeTab, setActiveTab]     = useState(0);
   const [selectedCard, setSelectedCard] = useState(null);
   const [category, setCategory]   = useState("Dining");
   const [amount, setAmount]       = useState("1000");
@@ -2494,7 +2513,7 @@ export default function CardIQ() {
     setAnimIn(false);
     const t = setTimeout(() => setAnimIn(true), 50);
     return () => clearTimeout(t);
-  }, [activeTab]);
+  }, [pathname]);
 
   useEffect(() => {
     if (!rblAutoSaved) return;
@@ -2522,12 +2541,11 @@ export default function CardIQ() {
     const txnDate = txn.date || new Date().toISOString().slice(0, 10);
     const updatedCard = cards.find(c => c.id === txn.cardId);
     if (updatedCard && txn.type !== "credit") {
+      // Only update spent (utilization) — NOT totalDue/minDue which reflect billed statement amounts
       const newCard = {
         ...updatedCard,
-        spent:    updatedCard.spent    + txn.amount,
-        points:   (updatedCard.points || 0) + (txn.points || 0),
-        totalDue: updatedCard.totalDue + txn.amount,
-        minDue:   Math.floor((updatedCard.totalDue + txn.amount) * 0.05),
+        spent:  updatedCard.spent  + txn.amount,
+        points: (updatedCard.points || 0) + (txn.points || 0),
       };
       setCards(prev => prev.map(c => c.id === txn.cardId ? newCard : c));
       const { id, ...cardData } = newCard;
@@ -2914,8 +2932,8 @@ export default function CardIQ() {
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         {isDesktop && (
           <SidebarNav
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
+            activePath={activePath}
+            navigate={setTab}
             cards={cards}
             onSignOut={handleSignOut}
           />
@@ -2950,12 +2968,12 @@ export default function CardIQ() {
             <AlertBanner cards={cards} />
 
             <div style={{ opacity: animIn ? 1 : 0, transition: "opacity 0.3s ease" }}>
-              {activeTab === 0 && <CardsTab isDesktop={isDesktop} cards={cards} txns={txns} onSelect={setSelectedCard} selected={selectedCard} onQRPay={setQrCard} onAdd={() => setShowAddCard(true)} onEdit={setEditCard} onDelete={handleDeleteCard} />}
-              {activeTab === 1 && <SmartPayTab cards={cards} txns={txns} category={category} setCategory={setCategory} amount={amount} setAmount={setAmount} txnType={txnType} setTxnType={setTxnType} onAnalyze={handleAnalyze} recommendations={recommendations} onQRPay={setQrCard} />}
-              {activeTab === 2 && <BillsTab cards={cards} txns={txns} onViewBill={setBillCard} onMarkPaid={handleMarkPaid} onSaveEMI={handleSaveEMI} onDeleteEMI={handleDeleteEMI} />}
-              {activeTab === 3 && <TransactionsTab txns={txns} cards={cards} onAdd={() => setShowAddTxn(true)} onUploadStatement={() => fileInputRef.current?.click()} onAddFromSMS={() => setShowSMSModal(true)} />}
-              {activeTab === 4 && <InsightsTab cards={cards} txns={txns} totalLimit={totalLimit} totalSpent={totalSpent} totalAvailable={totalAvailable} />}
-              {activeTab === 5 && <BudgetTab txns={txns} cards={cards} />}
+              {activeTabIdx === 0 && <CardsTab isDesktop={isDesktop} cards={cards} txns={txns} onSelect={setSelectedCard} selected={selectedCard} onQRPay={setQrCard} onAdd={() => setShowAddCard(true)} onEdit={setEditCard} onDelete={handleDeleteCard} />}
+              {activeTabIdx === 1 && <SmartPayTab cards={cards} txns={txns} category={category} setCategory={setCategory} amount={amount} setAmount={setAmount} txnType={txnType} setTxnType={setTxnType} onAnalyze={handleAnalyze} recommendations={recommendations} onQRPay={setQrCard} />}
+              {activeTabIdx === 2 && <BillsTab cards={cards} txns={txns} onViewBill={setBillCard} onMarkPaid={handleMarkPaid} onSaveEMI={handleSaveEMI} onDeleteEMI={handleDeleteEMI} />}
+              {activeTabIdx === 3 && <TransactionsTab txns={txns} cards={cards} onAdd={() => setShowAddTxn(true)} onUploadStatement={() => fileInputRef.current?.click()} onAddFromSMS={() => setShowSMSModal(true)} />}
+              {activeTabIdx === 4 && <InsightsTab cards={cards} txns={txns} totalLimit={totalLimit} totalSpent={totalSpent} totalAvailable={totalAvailable} />}
+              {activeTabIdx === 5 && <BudgetTab txns={txns} cards={cards} />}
             </div>
           </div>
         </div>
@@ -2964,12 +2982,12 @@ export default function CardIQ() {
       {/* ── BOTTOM NAV (mobile only) ─────────────────────────────────────────── */}
       {!isDesktop && (
         <div style={{ display: "flex", background: "rgba(10,10,10,0.97)", backdropFilter: "blur(20px)", padding: "10px 0 env(safe-area-inset-bottom,16px)", borderTop: "1px solid #1e1e1e", flexShrink: 0 }}>
-          {tabs.map((tab, i) => {
-            const active = activeTab === i;
+          {TABS.map(({ path, label, icon }, i) => {
+            const active = activeTabIdx === i;
             return (
-              <button key={tab} onClick={() => setActiveTab(i)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", background: "none", border: "none", cursor: "pointer", color: active ? "#fff" : "#555", padding: "4px 0" }}>
-                <span style={{ fontSize: 20 }}>{tabIcons[i]}</span>
-                <span style={{ fontSize: 9, marginTop: 3, fontWeight: active ? 700 : 400 }}>{tab}</span>
+              <button key={path} onClick={() => setTab(path)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", background: "none", border: "none", cursor: "pointer", color: active ? "#fff" : "#555", padding: "4px 0" }}>
+                <span style={{ fontSize: 20 }}>{icon}</span>
+                <span style={{ fontSize: 9, marginTop: 3, fontWeight: active ? 700 : 400 }}>{label}</span>
               </button>
             );
           })}
