@@ -119,35 +119,41 @@ export function parseBillingSummary(lines) {
 
   // ── Total Amount Due ──────────────────────────────────────────────────────
   // HDFC layout: header row has column labels (incl "TOTAL AMOUNT DUE") and
-  // the next row has values — graphical ±= operators aren't in PDF text.
-  // So we find the label line, then take the LAST number in the following row.
+  // the next row has values. Find label line, take LAST number in following row.
   // SBI layout: "*Total Amount Due ( ₹ )" on one line, "16,174.00" on next.
-  // ICICI layout: "= + + - `22,260.00" formula in joined text.
+  // ICICI layout: formula table "Prev + Purchases - Payments = Total Amount Due"
+  //   with all 4 column values merged on same line after label. The label is
+  //   the RIGHTMOST column header (preceded by `=`), so take the LAST number.
+  // RBL layout: "Total Amount Due `13,907.02 ..." — label then value, take FIRST.
   let totalDue = 0;
 
   const totalDueLabelRe = /total\s+(?:amount|payment)\s+due|total\s+outstanding(?:\s+(?:amount|balance))?|net\s+(?:amount\s+)?payable/i;
   for (let i = 0; i < lines.length && !totalDue; i++) {
     if (!totalDueLabelRe.test(lines[i])) continue;
-    // Case A: value on the same line — take the FIRST number after the label
-    // (not last, because RBL two-column merge appends unrelated amounts after)
-    const labelMatch = lines[i].match(totalDueLabelRe);
-    const afterLabel = lines[i].slice(labelMatch.index + labelMatch[0].length);
-    const afterNums  = allNums(afterLabel);
-    if (afterNums.length > 0) { totalDue = afterNums[0]; break; }
+    const labelMatch  = lines[i].match(totalDueLabelRe);
+    const beforeLabel = lines[i].slice(0, labelMatch.index).trim();
+    const afterLabel  = lines[i].slice(labelMatch.index + labelMatch[0].length);
+    const afterNums   = allNums(afterLabel);
+    if (afterNums.length === 1) { totalDue = afterNums[0]; break; }
+    if (afterNums.length > 1) {
+      // ICICI formula column: "= Total Amount Due" — label is rightmost column header,
+      // all prior column values appear AFTER it in merged text → take last number.
+      // Other banks (RBL): label followed by its value first → take first number.
+      totalDue = /=\s*$/.test(beforeLabel) ? afterNums[afterNums.length - 1] : afterNums[0];
+      break;
+    }
     // Case B: value on next 1-3 lines (HDFC multi-col row, SBI standalone)
     for (let j = i + 1; j <= Math.min(i + 3, lines.length - 1); j++) {
       const nums = allNums(lines[j]);
       if (nums.length === 0) continue;
-      // Multi-value row (HDFC formula): last number = total due
-      // Single-value row (SBI): that number = total due
-      totalDue = nums[nums.length - 1];
+      totalDue = nums[nums.length - 1]; // last = rightmost column = total
       break;
     }
   }
 
-  // Fallback: ICICI "= + + - `22,260.00" formula pattern in joined text
+  // Fallback: scan joined text for "Total Amount Due" with nearby number (ICICI backtick style)
   if (!totalDue) {
-    const m = text.match(/=\s*[+\-\s]+[`C₹]?\s*([\d,]+\.\d{2})\b/);
+    const m = text.match(/total\s+amount\s+due[^`₹\d]{0,20}[`₹]?\s*([\d,]+\.\d{2})/i);
     if (m) totalDue = toNum(m[1]);
   }
 
