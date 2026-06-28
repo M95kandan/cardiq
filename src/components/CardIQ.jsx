@@ -1377,18 +1377,10 @@ function BillsTab({ cards, txns, onViewBill, onMarkPaid, onSaveEMI, onDeleteEMI 
   const getUnbilled = (card) => txns.filter(t =>
     t.cardId === card.id && (t.source === "sms" || t.source === "manual") && t.type !== "credit"
   );
-  // Billed due = statement amount only.
-  // Only subtract source="manual" txns — those were incorrectly added to totalDue
-  // by an old bug. SMS txns (source="sms") were never in totalDue, so don't subtract them.
-  const cardBilledDue = Object.fromEntries(
-    cards.map(c => {
-      const manualAmt = txns
-        .filter(t => t.cardId === c.id && t.source === "manual" && t.type !== "credit")
-        .reduce((a, t) => a + t.amount, 0);
-      return [c.id, Math.max(0, (c.totalDue || 0) - manualAmt)];
-    })
-  );
-  const totalBilledDue = Object.values(cardBilledDue).reduce((s, v) => s + v, 0);
+  // After DB migration, totalDue = statement amount only.
+  // SMS txns are tracked separately as unbilled — no subtraction needed.
+  const cardBilledDue = Object.fromEntries(cards.map(c => [c.id, c.totalDue || 0]));
+  const totalBilledDue = cards.reduce((s, c) => s + (c.totalDue || 0), 0);
   const totalUpcoming    = cards.reduce((s, c) => s + getUnbilled(c).reduce((a, t) => a + t.amount, 0), 0);
   const getMonthTxns     = (card) => txns.filter(t => t.cardId === card.id && t.type !== "credit" && t.source !== "payment" && txnInMonth(t, selMonth));
   const getMonthPayments = (month) => txns.filter(t => t.source === "payment" && txnInMonth(t, month));
@@ -2778,8 +2770,8 @@ export default function CardIQ() {
 
     // ── Update card billing info ───────────────────────────────────────────────
     if (saveBilling && billing && card) {
-      // Any remaining unbilled (unmatched) txns are genuinely from the NEXT cycle.
-      // Add them on top of the statement total so they don't get wiped.
+      // totalDue = billed statement amount only. Unmatched SMS/manual stay as
+      // separate unbilled txns — don't inflate totalDue with them.
       const unmatchedAmt = existingUnbilled
         .filter(t => !matchedIds.has(t.id))
         .reduce((s, t) => s + t.amount, 0);
@@ -2787,8 +2779,8 @@ export default function CardIQ() {
       const baseDue = billing.totalDue > 0 ? billing.totalDue : card.totalDue;
       const updated = {
         ...card,
-        totalDue: baseDue + unmatchedAmt,
-        spent:    baseDue + unmatchedAmt,
+        totalDue: baseDue,                 // statement amount only
+        spent:    baseDue + unmatchedAmt,  // utilisation includes unbilled
         ...(billing.minDue  > 0  && { minDue:    billing.minDue }),
         ...(billing.dueDate      && { dueDate:   billing.dueDate }),
         ...(billing.stmtDate     && { stmtDate:  billing.stmtDate }),
