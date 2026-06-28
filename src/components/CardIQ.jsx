@@ -395,8 +395,158 @@ function AddTxnModal({ cards, onAdd, onClose }) {
   );
 }
 
+// ─── SUBMIT MISSING CARD MODAL ────────────────────────────────────────────────
+function SubmitCardModal({ onClose, onSubmit, initialName = "" }) {
+  const networks = ["Visa", "Mastercard", "RuPay", "Amex", "Diners"];
+  const [name, setName]         = useState(initialName);
+  const [bank, setBank]         = useState("");
+  const [network, setNetwork]   = useState("Visa");
+  const [annualFee, setAnnualFee] = useState("0");
+  const [pointValue, setPointValue] = useState("0.25");
+  const [baseRate, setBaseRate] = useState("1");
+  const [diningRate, setDiningRate] = useState("2");
+  const [travelRate, setTravelRate] = useState("2");
+  const [shoppingRate, setShoppingRate] = useState("2");
+  const [fuelRate, setFuelRate] = useState("1");
+  const [isCashback, setIsCashback] = useState(false);
+  const [supportsQR, setSupportsQR] = useState(false);
+  const [benefits, setBenefits] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [done, setDone]         = useState(false);
+
+  const handleSubmit = async () => {
+    if (!name.trim() || !bank.trim()) return;
+    setSubmitting(true);
+    const cardData = {
+      name: name.trim(),
+      bank: bank.trim(),
+      network,
+      annualFee: parseInt(annualFee) || 0,
+      pointValue: parseFloat(pointValue) || 0.25,
+      isCashback,
+      supportsQR,
+      rewardRate: {
+        base: parseFloat(baseRate) || 1,
+        dining: parseFloat(diningRate) || 2,
+        travel: parseFloat(travelRate) || 2,
+        shopping: parseFloat(shoppingRate) || 2,
+        fuel: parseFloat(fuelRate) || 1,
+        other: parseFloat(baseRate) || 1,
+      },
+      benefits: benefits.trim() ? benefits.trim().split("\n").filter(Boolean) : [],
+      slug: `${bank.trim().toLowerCase().replace(/\s+/g, "_")}_${name.trim().toLowerCase().replace(/\s+/g, "_")}`,
+      color: ["#1a1a2e", "#16213e"],
+      accent: "#4286f4",
+    };
+    await onSubmit(cardData);
+    setSubmitting(false);
+    setDone(true);
+  };
+
+  const inputRow = (label, value, setValue, type = "text", placeholder = "") => (
+    <div style={{ marginBottom: 14 }}>
+      <div style={ST.label}>{label}</div>
+      <input
+        type={type}
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        placeholder={placeholder}
+        style={ST.input}
+      />
+    </div>
+  );
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", backdropFilter: "blur(8px)", zIndex: 800, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      <div style={{ background: "#111", borderRadius: "24px 24px 0 0", padding: "24px 20px 40px", width: "100%", maxWidth: 540, maxHeight: "90dvh", overflowY: "auto", boxShadow: "0 -8px 40px rgba(0,0,0,0.8)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>Submit Missing Card</div>
+            <div style={{ fontSize: 11, color: "#555", marginTop: 2 }}>Help the community — we'll review and add it</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#555", fontSize: 22, cursor: "pointer", lineHeight: 1 }}>×</button>
+        </div>
+
+        {done ? (
+          <div style={{ textAlign: "center", padding: "32px 0" }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>🎉</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "#34e89e", marginBottom: 8 }}>Submitted!</div>
+            <div style={{ fontSize: 13, color: "#888", marginBottom: 24 }}>Thanks for contributing. We'll review and add <strong style={{ color: "#fff" }}>{name}</strong> soon.</div>
+            <button onClick={onClose} style={{ padding: "12px 28px", borderRadius: 14, background: "#1a1a1a", border: "1px solid #2a2a2a", color: "#fff", fontSize: 14, cursor: "pointer" }}>Close</button>
+          </div>
+        ) : (
+          <>
+            {inputRow("CARD NAME *", name, setName, "text", "e.g. HDFC Infinia Metal")}
+            {inputRow("BANK / ISSUER *", bank, setBank, "text", "e.g. HDFC Bank")}
+
+            <div style={{ marginBottom: 14 }}>
+              <div style={ST.label}>NETWORK</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {networks.map(n => (
+                  <button key={n} onClick={() => setNetwork(n)} style={{ ...ST.pill, background: network === n ? "#4286f4" : "#1a1a1a", borderColor: network === n ? "#4286f4" : "#2a2a2a", color: "#fff" }}>{n}</button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+              <div>
+                <div style={ST.label}>ANNUAL FEE (₹)</div>
+                <input type="number" value={annualFee} onChange={e => setAnnualFee(e.target.value)} style={ST.input} placeholder="0" />
+              </div>
+              <div>
+                <div style={ST.label}>POINT VALUE (₹/pt)</div>
+                <input type="number" step="0.01" value={pointValue} onChange={e => setPointValue(e.target.value)} style={ST.input} placeholder="0.25" />
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 14 }}>
+              <div style={ST.label}>REWARD RATES (X = points per ₹100)</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                {[["Base", baseRate, setBaseRate], ["Dining", diningRate, setDiningRate], ["Travel", travelRate, setTravelRate], ["Shopping", shoppingRate, setShoppingRate], ["Fuel", fuelRate, setFuelRate]].map(([l, v, sv]) => (
+                  <div key={l}>
+                    <div style={{ fontSize: 9, color: "#555", marginBottom: 4, fontWeight: 700 }}>{l}</div>
+                    <input type="number" step="0.5" value={v} onChange={e => sv(e.target.value)} style={{ ...ST.input, padding: "8px 10px", fontSize: 13 }} />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 16, marginBottom: 14 }}>
+              {[["Cashback card", isCashback, setIsCashback], ["Supports RuPay QR", supportsQR, setSupportsQR]].map(([l, v, sv]) => (
+                <label key={l} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13, color: "#aaa" }}>
+                  <input type="checkbox" checked={v} onChange={e => sv(e.target.checked)} style={{ accentColor: "#4286f4" }} />
+                  {l}
+                </label>
+              ))}
+            </div>
+
+            <div style={{ marginBottom: 20 }}>
+              <div style={ST.label}>KEY BENEFITS (one per line, optional)</div>
+              <textarea
+                value={benefits}
+                onChange={e => setBenefits(e.target.value)}
+                placeholder={"5X on Swiggy\nAirport lounge access\n1% fuel surcharge waiver"}
+                rows={3}
+                style={{ ...ST.input, resize: "vertical", lineHeight: 1.6 }}
+              />
+            </div>
+
+            <button
+              onClick={handleSubmit}
+              disabled={submitting || !name.trim() || !bank.trim()}
+              style={{ width: "100%", padding: "15px", borderRadius: 16, background: (!name.trim() || !bank.trim()) ? "#1a1a1a" : "linear-gradient(135deg,#1e3a8a,#4286f4)", border: "none", color: (!name.trim() || !bank.trim()) ? "#555" : "#fff", fontSize: 15, fontWeight: 700, cursor: (!name.trim() || !bank.trim()) ? "not-allowed" : "pointer" }}
+            >
+              {submitting ? "Submitting…" : "Submit Card"}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── CARD NAME AUTOCOMPLETE ───────────────────────────────────────────────────
-function CardSearchInput({ value, onChange, onSelectCard }) {
+function CardSearchInput({ value, onChange, onSelectCard, communityCards = [], onSubmitMissing }) {
   const [results, setResults] = useState([]);
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -409,9 +559,9 @@ function CardSearchInput({ value, onChange, onSelectCard }) {
 
   const handleChange = (v) => {
     onChange(v);
-    const res = searchCards(v);
+    const res = searchCards(v, communityCards);
     setResults(res);
-    setOpen(res.length > 0 && v.length >= 2);
+    setOpen(v.length >= 2);
   };
 
   const handleSelect = (card) => {
@@ -420,6 +570,8 @@ function CardSearchInput({ value, onChange, onSelectCard }) {
     setOpen(false);
     setResults([]);
   };
+
+  const showSubmitOption = value.length >= 2 && results.length < 3;
 
   return (
     <div ref={ref} style={{ position: "relative", marginBottom: 14 }}>
@@ -431,7 +583,7 @@ function CardSearchInput({ value, onChange, onSelectCard }) {
         style={{ ...ST.input, borderColor: open ? "#4286f4" : "#2a2a2a" }}
         autoFocus
       />
-      {open && (
+      {open && (results.length > 0 || showSubmitOption) && (
         <div style={{
           position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 999,
           background: "#111", border: "1px solid #2a2a2a", borderRadius: 14,
@@ -442,7 +594,7 @@ function CardSearchInput({ value, onChange, onSelectCard }) {
               display: "flex", alignItems: "center", gap: 12, width: "100%",
               padding: "12px 16px", background: "transparent", border: "none",
               color: "#fff", cursor: "pointer", textAlign: "left",
-              borderBottom: i < results.length - 1 ? "1px solid #1e1e1e" : "none",
+              borderBottom: "1px solid #1e1e1e",
               transition: "background 0.15s",
             }}
               onMouseEnter={e => e.currentTarget.style.background = "#1a1a1a"}
@@ -470,6 +622,17 @@ function CardSearchInput({ value, onChange, onSelectCard }) {
               </div>
             </button>
           ))}
+          {showSubmitOption && onSubmitMissing && (
+            <button
+              onClick={() => { setOpen(false); onSubmitMissing(value); }}
+              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "12px 16px", background: "transparent", border: "none", color: "#4286f4", cursor: "pointer", textAlign: "left", fontSize: 13, transition: "background 0.15s" }}
+              onMouseEnter={e => e.currentTarget.style.background = "#0a1a2e"}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+            >
+              <span style={{ fontSize: 16 }}>➕</span>
+              <span>Not found? Submit <strong>"{value}"</strong> to our database</span>
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -486,7 +649,7 @@ function FormField({ label, placeholder, value, onChange, type = "text", childre
   );
 }
 
-function AddEditCardModal({ card, onSave, onClose }) {
+function AddEditCardModal({ card, onSave, onClose, communityCards = [], onSubmitMissing }) {
   const isEdit = !!card;
   const blank = {
     name: "", bank: "", last4: "", network: "Visa",
@@ -553,13 +716,15 @@ function AddEditCardModal({ card, onSave, onClose }) {
             value={f.name}
             onChange={v => set("name", v)}
             onSelectCard={handleSelectFromDB}
+            communityCards={communityCards}
+            onSubmitMissing={onSubmitMissing}
           />
         )}
         {isEdit && <FormField label="CARD NAME" placeholder="e.g. HDFC Regalia" value={f.name} onChange={v => set("name", v)} />}
 
         {/* Benefits preview if from DB */}
         {!isEdit && (() => {
-          const match = CARD_DB.find(c => c.name === f.name);
+          const match = CARD_DB.find(c => c.name === f.name) || communityCards.find(c => c.name === f.name);
           return match ? (
             <div style={{ background: "#0d1a33", borderRadius: 12, padding: "12px 14px", marginBottom: 14, border: "1px solid #1a3a5c" }}>
               <div style={{ fontSize: 10, color: "#4286f4", letterSpacing: 1, marginBottom: 8 }}>✓ CARD DETAILS AUTO-FILLED FROM DATABASE</div>
@@ -2196,6 +2361,9 @@ export default function CardIQ() {
   const [txns, setTxns]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [userId, setUserId]   = useState(null);
+  const [communityCards, setCommunityCards] = useState([]);
+  const [showSubmitCard, setShowSubmitCard] = useState(false);
+  const [submitCardName, setSubmitCardName] = useState("");
   const [activeTab, setActiveTab]     = useState(0);
   const [selectedCard, setSelectedCard] = useState(null);
   const [category, setCategory]   = useState("Dining");
@@ -2226,10 +2394,12 @@ export default function CardIQ() {
       if (userErr) { console.error("Auth error:", userErr); }
       if (!user) return;
       setUserId(user.id);
-      const [{ data: cardRows, error: cardErr }, { data: txnRows, error: txnErr }] = await Promise.all([
+      const [{ data: cardRows, error: cardErr }, { data: txnRows, error: txnErr }, { data: commRows }] = await Promise.all([
         supabase.from("cards").select("id, data").eq("user_id", user.id).order("created_at"),
         supabase.from("transactions").select("id, card_id, data").eq("user_id", user.id).order("created_at", { ascending: false }),
+        supabase.from("community_cards").select("data").eq("status", "approved"),
       ]);
+      if (commRows) setCommunityCards(commRows.map(r => r.data));
       if (cardErr) {
         console.error("Cards load error:", cardErr);
         setDbError(cardErr);
@@ -2352,6 +2522,15 @@ export default function CardIQ() {
   };
 
   const handleSignOut = () => supabase.auth.signOut();
+
+  const handleSubmitCommunityCard = async (cardData) => {
+    await supabase.from("community_cards").insert({ submitted_by: userId, data: cardData, status: "pending" });
+  };
+
+  const handleOpenSubmitCard = (name = "") => {
+    setSubmitCardName(name);
+    setShowSubmitCard(true);
+  };
 
   const handleSaveEMI = async (cardId, emi) => {
     const card = cards.find(c => c.id === cardId);
@@ -2736,8 +2915,9 @@ export default function CardIQ() {
       {qrCard    && <QRPayModal card={qrCard} onClose={() => setQrCard(null)} onTransaction={handleQRTxn} />}
       {billCard  && <BillModal card={billCard} onClose={() => setBillCard(null)} />}
       {showAddTxn && cards.length > 0 && <AddTxnModal cards={cards} onAdd={handleAddTxn} onClose={() => setShowAddTxn(false)} />}
-      {showAddCard && <AddEditCardModal onSave={handleSaveCard} onClose={() => setShowAddCard(false)} />}
-      {editCard  && <AddEditCardModal card={editCard} onSave={handleSaveCard} onClose={() => setEditCard(null)} />}
+      {showAddCard && <AddEditCardModal onSave={handleSaveCard} onClose={() => setShowAddCard(false)} communityCards={communityCards} onSubmitMissing={handleOpenSubmitCard} />}
+      {editCard  && <AddEditCardModal card={editCard} onSave={handleSaveCard} onClose={() => setEditCard(null)} communityCards={communityCards} />}
+      {showSubmitCard && <SubmitCardModal initialName={submitCardName} onSubmit={handleSubmitCommunityCard} onClose={() => setShowSubmitCard(false)} />}
       {parsedStatement && <StatementReviewModal parsedTxns={parsedStatement.txns} rawLines={parsedStatement.rawLines} billing={parsedStatement.billing} identity={parsedStatement.identity} cards={cards} onImport={handleImportStatement} onClose={() => setParsedStatement(null)} />}
       {showSMSModal && cards.length > 0 && <SMSParseModal cards={cards} onAdd={handleSMSAdd} onClose={() => setShowSMSModal(false)} />}
       {pendingPDFFile && <PDFPasswordModal isWrong={pdfPasswordErr === "PASSWORD_WRONG"} onSubmit={handlePasswordSubmit} onClose={() => { setPendingPDFFile(null); setPdfPasswordErr(null); }} />}
