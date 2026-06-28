@@ -1353,6 +1353,7 @@ function BillsTab({ cards, txns, onViewBill, onMarkPaid, onSaveEMI, onDeleteEMI 
   const _now = new Date();
   const [selMonth, setSelMonth]   = useState({ year: _now.getFullYear(), month: _now.getMonth() });
   const [payingCard, setPayingCard] = useState(null);
+  const [billViewFilter, setBillViewFilter] = useState("all"); // "all" | "billed" | "unbilled"
   const [showEMIModal, setShowEMIModal]   = useState(false);
   const [emiModalData, setEmiModalData]   = useState(null); // { emi, cardId } for edit | { cardId } for new
   const isCurrent  = selMonth.year === _now.getFullYear() && selMonth.month === _now.getMonth();
@@ -1480,6 +1481,17 @@ function BillsTab({ cards, txns, onViewBill, onMarkPaid, onSaveEMI, onDeleteEMI 
       ) : (
         // ── Current month: outstanding bills ───────────────────────────────────
         <>
+          {/* Billed / Unbilled filter */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+            {[["all", "All"], ["billed", "✅ Billed"], ["unbilled", "⏳ Unbilled"]].map(([v, l]) => {
+              const active = billViewFilter === v;
+              return (
+                <button key={v} onClick={() => setBillViewFilter(v)} style={{ padding: "5px 14px", borderRadius: 20, border: `1px solid ${active ? (v === "unbilled" ? "#c084fc" : v === "billed" ? "#34e89e" : "#4286f4") : "#2a2a2a"}`, background: active ? (v === "unbilled" ? "#1a0533" : v === "billed" ? "#0a2a1a" : "#0d1a33") : "transparent", color: active ? (v === "unbilled" ? "#c084fc" : v === "billed" ? "#34e89e" : "#4286f4") : "#555", fontSize: 12, fontWeight: active ? 700 : 400, cursor: "pointer" }}>
+                  {l}
+                </button>
+              );
+            })}
+          </div>
           <div style={S.secLabel}>UPCOMING BILLS</div>
       <div style={{ background: "#111", borderRadius: 20, padding: "20px", marginBottom: 16, border: "1px solid #1e1e1e" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -1510,7 +1522,11 @@ function BillsTab({ cards, txns, onViewBill, onMarkPaid, onSaveEMI, onDeleteEMI 
         </div>
       </div>
 
-      {sorted.map((card, i) => {
+      {sorted.filter(card => {
+        if (billViewFilter === "billed")   return (card.totalDue || 0) > 0;
+        if (billViewFilter === "unbilled") return txns.some(t => t.cardId === card.id && (t.source === "sms" || t.source === "manual") && t.type !== "credit");
+        return true;
+      }).map((card, i) => {
         const nextDue = getNextDueDate(card.dueDate);
         const days = getDaysUntil(nextDue);
         const urgency = days <= 3 ? "#e94560" : days <= 7 ? "#f97316" : "#34e89e";
@@ -2933,7 +2949,7 @@ export default function CardIQ() {
             {dbErrorBanner}
             <AlertBanner cards={cards} />
 
-            <div style={{ opacity: animIn ? 1 : 0, transform: animIn ? "translateY(0)" : "translateY(10px)", transition: "all 0.3s ease" }}>
+            <div style={{ opacity: animIn ? 1 : 0, transition: "opacity 0.3s ease" }}>
               {activeTab === 0 && <CardsTab isDesktop={isDesktop} cards={cards} txns={txns} onSelect={setSelectedCard} selected={selectedCard} onQRPay={setQrCard} onAdd={() => setShowAddCard(true)} onEdit={setEditCard} onDelete={handleDeleteCard} />}
               {activeTab === 1 && <SmartPayTab cards={cards} txns={txns} category={category} setCategory={setCategory} amount={amount} setAmount={setAmount} txnType={txnType} setTxnType={setTxnType} onAnalyze={handleAnalyze} recommendations={recommendations} onQRPay={setQrCard} />}
               {activeTab === 2 && <BillsTab cards={cards} txns={txns} onViewBill={setBillCard} onMarkPaid={handleMarkPaid} onSaveEMI={handleSaveEMI} onDeleteEMI={handleDeleteEMI} />}
