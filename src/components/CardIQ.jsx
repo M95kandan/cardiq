@@ -1917,6 +1917,66 @@ function StatementReviewModal({ parsedTxns, rawLines, billing, identity, cards, 
   );
 }
 
+// ─── BILLING SMS / EMAIL PARSER ───────────────────────────────────────────────
+// Parses bank billing alerts (statement generated SMS or email body text).
+// Works for HDFC, ICICI, SBI, Axis, RBL, Kotak — SMS and email formats.
+function parseBillingAlert(raw) {
+  if (!raw?.trim()) return null;
+  const isBilling = /statement|total\s+am[ot]|amount\s+due|min.*due|due\s+date|\bTAD\b|\bMAD\b|payment\s+due|bill.*ready|bill.*generat/i.test(raw);
+  if (!isBilling) return null;
+
+  const toNum = s => parseFloat(s.replace(/,/g, ""));
+  const M = { jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12 };
+
+  // Card last4
+  const cardM = raw.match(/(?:XX+|x{2,}|ending\s*(?:with\s*|in\s*)?|card[^0-9]{0,10})(\d{4})\b/i);
+  const last4 = cardM ? cardM[1] : null;
+
+  // Total Amount Due — handles TAD, "Total Amt Due", "Amount Due", "Total Amount Due"
+  let totalDue = 0;
+  const tdM =
+    raw.match(/total\s+am[ot]\.?\s*due[\s:]*(?:Rs\.?|₹|INR)\s*([\d,]+\.?\d*)/i) ||
+    raw.match(/\bTAD[\s:]*(?:Rs\.?|₹|INR)\s*([\d,]+\.?\d*)/i) ||
+    raw.match(/(?:Rs\.?|₹|INR)\s*([\d,]+\.?\d*)\s+is\s+(?:the\s+)?(?:total\s+)?amount\s+due/i) ||
+    raw.match(/total\s+amount\s+due[^₹Rs\d]{0,20}(?:Rs\.?|₹|INR)\s*([\d,]+\.?\d*)/i) ||
+    raw.match(/amount\s+due[^₹Rs\d]{0,15}(?:Rs\.?|₹|INR)\s*([\d,]+\.?\d*)/i);
+  if (tdM) totalDue = toNum(tdM[1]);
+
+  // Minimum Due — handles MAD, "Min Amt Due", "Minimum Amount Due", "Min Due"
+  let minDue = 0;
+  const mdM =
+    raw.match(/min(?:imum)?\s*(?:am[ot]\.?|payment)?\s*due[\s:]*(?:Rs\.?|₹|INR)\s*([\d,]+\.?\d*)/i) ||
+    raw.match(/\bMAD[\s:]*(?:Rs\.?|₹|INR)\s*([\d,]+\.?\d*)/i) ||
+    raw.match(/minimum\s+payment\s+due\s+is\s+(?:Rs\.?|₹|INR)\s*([\d,]+\.?\d*)/i);
+  if (mdM) minDue = toNum(mdM[1]);
+
+  // Due Date — DD-Mon-YY, DD-Mon-YYYY, DD/MM/YYYY, DD-MM-YY
+  let dueDate = null;
+  const ddM =
+    raw.match(/due\s+date[\s:]*(\d{1,2}[-\/][A-Za-z]{3}[-\/]\d{2,4})/i) ||
+    raw.match(/due\s+date[\s:]*(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/i) ||
+    raw.match(/(?:last\s+date(?:\s+of\s+payment)?|pay\s+by|payment\s+due\s+date)\s+(?:is\s+)?(\d{1,2}[-\/][A-Za-z]{3}[-\/]\d{2,4})/i) ||
+    raw.match(/(?:last\s+date(?:\s+of\s+payment)?|pay\s+by)\s+(?:is\s+)?(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/i);
+  if (ddM) {
+    const ds = ddM[1];
+    const m1 = ds.match(/^(\d{1,2})[-\/]([A-Za-z]{3})[-\/](\d{2,4})$/);
+    if (m1) {
+      const mon = M[m1[2].toLowerCase()];
+      const yr  = m1[3].length === 2 ? "20" + m1[3] : m1[3];
+      if (mon) dueDate = `${yr}-${String(mon).padStart(2,"0")}-${String(m1[1]).padStart(2,"0")}`;
+    }
+    if (!dueDate) {
+      const m2 = ds.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})$/);
+      if (m2) {
+        const yr = m2[3].length === 2 ? "20" + m2[3] : m2[3];
+        dueDate = `${yr}-${m2[2].padStart(2,"0")}-${m2[1].padStart(2,"0")}`;
+      }
+    }
+  }
+
+  return { last4, totalDue, minDue, dueDate };
+}
+
 // ─── SMS TRANSACTION PARSER ───────────────────────────────────────────────────
 function parseBankSMS(raw) {
   const amtM    = raw.match(/(?:Rs\.?|INR|₹)\s*([\d,]+(?:\.\d{1,2})?)/i);
@@ -1932,7 +1992,10 @@ function parseBankSMS(raw) {
   return { amount, last4, merchant, type: isCredit ? "credit" : "debit", date };
 }
 
-function SMSParseModal({ cards, onAdd, onClose }) {
+function SMSParseModal({ cards, onAdd, onBillingUpdate, onClose }) {
+  const [mode, setMode] = useState("transaction"); // "transaction" | "billing"
+
+  // ── Transaction mode state ────────────────────────────────────────────────
   const [smsText, setSmsText]   = useState("");
   const [parsed, setParsed]     = useState(null);
   const [cardId, setCardId]     = useState(cards[0]?.id || "");
@@ -1942,7 +2005,17 @@ function SMSParseModal({ cards, onAdd, onClose }) {
   const [type, setType]         = useState("debit");
   const [submitting, setSubmitting] = useState(false);
 
-  // Auto-parse whenever SMS text changes
+  // ── Billing mode state ────────────────────────────────────────────────────
+  const [billText, setBillText]       = useState("");
+  const [billParsed, setBillParsed]   = useState(null);
+  const [billCardId, setBillCardId]   = useState(cards[0]?.id || "");
+  const [billTotal, setBillTotal]     = useState("");
+  const [billMin, setBillMin]         = useState("");
+  const [billDueDate, setBillDueDate] = useState("");
+  const [billSaving, setBillSaving]   = useState(false);
+  const [billSaved, setBillSaved]     = useState(false);
+
+  // Auto-parse transaction SMS
   useEffect(() => {
     if (!smsText.trim()) { setParsed(null); return; }
     const r = parseBankSMS(smsText);
@@ -1951,76 +2024,155 @@ function SMSParseModal({ cards, onAdd, onClose }) {
     if (r.merchant) setMerchant(r.merchant);
     if (r.type)     setType(r.type);
     if (r.date)     setDate(r.date);
-    if (r.last4) {
-      const match = cards.find(c => c.last4 === r.last4);
-      if (match) setCardId(match.id);
-    }
+    if (r.last4) { const m = cards.find(c => c.last4 === r.last4); if (m) setCardId(m.id); }
   }, [smsText]);
+
+  // Auto-parse billing SMS / email
+  useEffect(() => {
+    if (!billText.trim()) { setBillParsed(null); return; }
+    const r = parseBillingAlert(billText);
+    setBillParsed(r);
+    if (r) {
+      if (r.totalDue) setBillTotal(String(r.totalDue));
+      if (r.minDue)   setBillMin(String(r.minDue));
+      if (r.dueDate)  setBillDueDate(r.dueDate);
+      if (r.last4)  { const m = cards.find(c => c.last4 === r.last4); if (m) setBillCardId(m.id); }
+    }
+  }, [billText]);
+
+  const CardPills = ({ selected, onSelect }) => (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+      {cards.map(c => (
+        <button key={c.id} onClick={() => onSelect(c.id)} style={{ padding: "6px 12px", borderRadius: 20, border: `1px solid ${selected === c.id ? c.accent : "#2a2a2a"}`, background: selected === c.id ? "#111" : "transparent", color: selected === c.id ? c.accent : "#555", fontSize: 11, cursor: "pointer", fontWeight: selected === c.id ? 700 : 400 }}>
+          {c.name} ···· {c.last4}
+        </button>
+      ))}
+    </div>
+  );
+
+  const ModeTabs = () => (
+    <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+      {[["transaction","💳 Transaction"],["billing","🗓️ Bill Statement"]].map(([v,l]) => (
+        <button key={v} onClick={() => setMode(v)} style={{ flex: 1, padding: "8px 0", borderRadius: 12, border: `1px solid ${mode === v ? "#4286f4" : "#2a2a2a"}`, background: mode === v ? "#0d1a33" : "transparent", color: mode === v ? "#4286f4" : "#555", fontSize: 12, fontWeight: mode === v ? 700 : 400, cursor: "pointer" }}>
+          {l}
+        </button>
+      ))}
+    </div>
+  );
 
   return (
     <div style={M.overlay} onClick={onClose}>
       <div style={{ ...M.sheet, paddingBottom: 40 }} onClick={e => e.stopPropagation()}>
         <div style={M.handle} />
-        <div style={M.title}>Add from SMS / Alert</div>
-        <div style={M.subtitle}>Paste your bank transaction SMS — fields fill automatically</div>
-        <textarea
-          value={smsText} onChange={e => setSmsText(e.target.value)}
-          placeholder={"Example:\nYour HDFC Credit Card XX5870 used for Rs.450.00 at SWIGGY on 24-05-26."}
-          style={{ width: "100%", minHeight: 90, background: "#0d0d0d", border: `1px solid ${parsed ? "#34e89e44" : "#2a2a2a"}`, borderRadius: 12, color: "#aaa", fontSize: 13, padding: "12px", boxSizing: "border-box", resize: "none", fontFamily: "inherit", marginBottom: parsed ? 12 : 0 }}
-          autoFocus
-        />
-        {smsText.trim() && !parsed && (
-          <div style={{ fontSize: 11, color: "#666", textAlign: "center", padding: "8px 0 12px" }}>
-            Could not auto-detect fields — fill in manually below
-          </div>
-        )}
+        <ModeTabs />
 
-        {(parsed || smsText.trim()) && <>
+        {mode === "transaction" ? (<>
+          <div style={M.title}>Add from SMS / Alert</div>
+          <div style={M.subtitle}>Paste your bank transaction SMS — fields fill automatically</div>
+          <textarea
+            value={smsText} onChange={e => setSmsText(e.target.value)}
+            placeholder={"Example:\nYour HDFC Credit Card XX5870 used for Rs.450.00 at SWIGGY on 24-05-26."}
+            style={{ width: "100%", minHeight: 90, background: "#0d0d0d", border: `1px solid ${parsed ? "#34e89e44" : "#2a2a2a"}`, borderRadius: 12, color: "#aaa", fontSize: 13, padding: "12px", boxSizing: "border-box", resize: "none", fontFamily: "inherit", marginBottom: parsed ? 12 : 0 }}
+            autoFocus
+          />
+          {smsText.trim() && !parsed && <div style={{ fontSize: 11, color: "#666", textAlign: "center", padding: "8px 0 12px" }}>Could not auto-detect fields — fill in manually below</div>}
+          {(parsed || smsText.trim()) && <>
+            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 10, color: "#555", letterSpacing: 1, marginBottom: 4 }}>MERCHANT</div>
+                <input value={merchant} onChange={e => setMerchant(e.target.value)} style={{ ...ST.input, width: "100%", boxSizing: "border-box" }} placeholder="Merchant name" />
+              </div>
+              <div style={{ width: 110 }}>
+                <div style={{ fontSize: 10, color: "#555", letterSpacing: 1, marginBottom: 4 }}>AMOUNT (₹)</div>
+                <input type="number" value={amount} onChange={e => setAmount(e.target.value)} style={{ ...ST.input, width: "100%", boxSizing: "border-box" }} />
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 10, color: "#555", letterSpacing: 1, marginBottom: 4 }}>DATE</div>
+                <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{ ...ST.input, width: "100%", boxSizing: "border-box", colorScheme: "dark" }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 10, color: "#555", letterSpacing: 1, marginBottom: 4 }}>TYPE</div>
+                <select value={type} onChange={e => setType(e.target.value)} style={{ ...ST.input, width: "100%", boxSizing: "border-box" }}>
+                  <option value="debit">Debit</option>
+                  <option value="credit">Credit</option>
+                </select>
+              </div>
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 10, color: "#555", letterSpacing: 1, marginBottom: 4 }}>CARD</div>
+              <CardPills selected={cardId} onSelect={setCardId} />
+            </div>
+            <button
+              onClick={async () => {
+                if (submitting || !merchant || !amount || !cardId) return;
+                setSubmitting(true);
+                await onAdd({ cardId, merchant, amount: parseFloat(amount), type, date, category: "Other", icon: "💳" });
+                setSubmitting(false);
+              }}
+              disabled={submitting || !merchant || !amount || !cardId}
+              style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", background: (merchant && amount && cardId && !submitting) ? "linear-gradient(90deg,#4286f4,#34e89e)" : "#1e1e1e", color: (merchant && amount && cardId && !submitting) ? "#000" : "#333", fontWeight: 800, fontSize: 15, cursor: (merchant && amount && cardId && !submitting) ? "pointer" : "not-allowed" }}>
+              {submitting ? "Adding…" : "Add Transaction"}
+            </button>
+          </>}
+        </>) : (<>
+          {/* ── Billing SMS / Email mode ─────────────────────────────────── */}
+          <div style={M.title}>Update Bill from SMS / Email</div>
+          <div style={M.subtitle}>Paste your bank statement SMS or email body — due amount auto-filled</div>
+
+          <textarea
+            value={billText} onChange={e => { setBillText(e.target.value); setBillSaved(false); }}
+            placeholder={"Examples:\nHDFC: Your Credit Card XX5870 Statement for Jun'26. Total Amt Due: Rs.15,234.00, Min Amt Due: Rs.762.00, Due Date: 05-Jul-26\n\nICICI: Total amount due on your Credit Card XXXX2002 is Rs.33,575.44. Min payment Rs.1,680.00. Last date 09-Jul-2026\n\nSBI: TAD: Rs.16,174.00, MAD: Rs.808.00, Due Date: 28-May-26\n\nAlso works with email body text"}
+            style={{ width: "100%", minHeight: 100, background: "#0d0d0d", border: `1px solid ${billParsed ? "#34e89e44" : "#2a2a2a"}`, borderRadius: 12, color: "#aaa", fontSize: 13, padding: "12px", boxSizing: "border-box", resize: "none", fontFamily: "inherit", marginBottom: 12 }}
+            autoFocus
+          />
+
+          {billParsed && (billParsed.totalDue > 0 || billParsed.dueDate) && (
+            <div style={{ display: "flex", gap: 8, marginBottom: 12, background: "#0a1a0a", border: "1px solid #1e3a1e", borderRadius: 12, padding: "10px 14px" }}>
+              {billParsed.totalDue > 0 && <div style={{ flex: 1 }}><div style={{ fontSize: 9, color: "#555", letterSpacing: 1 }}>DETECTED TOTAL DUE</div><div style={{ fontSize: 16, fontWeight: 800, color: "#34e89e" }}>₹{billParsed.totalDue.toLocaleString("en-IN")}</div></div>}
+              {billParsed.minDue   > 0 && <div style={{ flex: 1 }}><div style={{ fontSize: 9, color: "#555", letterSpacing: 1 }}>MIN DUE</div><div style={{ fontSize: 14, fontWeight: 700, color: "#f97316" }}>₹{billParsed.minDue.toLocaleString("en-IN")}</div></div>}
+              {billParsed.dueDate       && <div style={{ flex: 1 }}><div style={{ fontSize: 9, color: "#555", letterSpacing: 1 }}>DUE DATE</div><div style={{ fontSize: 13, fontWeight: 700, color: "#4286f4" }}>{new Date(billParsed.dueDate).toLocaleDateString("en-IN",{day:"numeric",month:"short"})}</div></div>}
+            </div>
+          )}
+
           <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 10, color: "#555", letterSpacing: 1, marginBottom: 4 }}>MERCHANT</div>
-              <input value={merchant} onChange={e => setMerchant(e.target.value)} style={{ ...ST.input, width: "100%", boxSizing: "border-box" }} placeholder="Merchant name" />
-            </div>
-            <div style={{ width: 110 }}>
-              <div style={{ fontSize: 10, color: "#555", letterSpacing: 1, marginBottom: 4 }}>AMOUNT (₹)</div>
-              <input type="number" value={amount} onChange={e => setAmount(e.target.value)} style={{ ...ST.input, width: "100%", boxSizing: "border-box" }} />
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 10, color: "#555", letterSpacing: 1, marginBottom: 4 }}>DATE</div>
-              <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{ ...ST.input, width: "100%", boxSizing: "border-box", colorScheme: "dark" }} />
+              <div style={{ fontSize: 10, color: "#555", letterSpacing: 1, marginBottom: 4 }}>TOTAL DUE (₹)</div>
+              <input type="number" value={billTotal} onChange={e => setBillTotal(e.target.value)} style={{ ...ST.input, width: "100%", boxSizing: "border-box" }} placeholder="0" />
             </div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 10, color: "#555", letterSpacing: 1, marginBottom: 4 }}>TYPE</div>
-              <select value={type} onChange={e => setType(e.target.value)} style={{ ...ST.input, width: "100%", boxSizing: "border-box" }}>
-                <option value="debit">Debit</option>
-                <option value="credit">Credit</option>
-              </select>
+              <div style={{ fontSize: 10, color: "#555", letterSpacing: 1, marginBottom: 4 }}>MIN DUE (₹)</div>
+              <input type="number" value={billMin} onChange={e => setBillMin(e.target.value)} style={{ ...ST.input, width: "100%", boxSizing: "border-box" }} placeholder="0" />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 10, color: "#555", letterSpacing: 1, marginBottom: 4 }}>DUE DATE</div>
+              <input type="date" value={billDueDate} onChange={e => setBillDueDate(e.target.value)} style={{ ...ST.input, width: "100%", boxSizing: "border-box", colorScheme: "dark" }} />
             </div>
           </div>
+
           <div style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 10, color: "#555", letterSpacing: 1, marginBottom: 4 }}>CARD</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {cards.map(c => (
-                <button key={c.id} onClick={() => setCardId(c.id)} style={{ padding: "6px 12px", borderRadius: 20, border: `1px solid ${cardId === c.id ? c.accent : "#2a2a2a"}`, background: cardId === c.id ? "#111" : "transparent", color: cardId === c.id ? c.accent : "#555", fontSize: 11, cursor: "pointer", fontWeight: cardId === c.id ? 700 : 400 }}>
-                  {c.name} ···· {c.last4}
-                </button>
-              ))}
-            </div>
+            <CardPills selected={billCardId} onSelect={setBillCardId} />
           </div>
+
+          {billSaved && <div style={{ textAlign: "center", color: "#34e89e", fontSize: 13, fontWeight: 700, marginBottom: 10 }}>✓ Bill updated successfully</div>}
+
           <button
             onClick={async () => {
-              if (submitting || !merchant || !amount || !cardId) return;
-              setSubmitting(true);
-              await onAdd({ cardId, merchant, amount: parseFloat(amount), type, date, category: "Other", icon: "💳" });
-              setSubmitting(false);
+              const td = parseFloat(billTotal) || 0;
+              const md = parseFloat(billMin) || 0;
+              if (billSaving || !billCardId || (!td && !billDueDate)) return;
+              setBillSaving(true);
+              await onBillingUpdate(billCardId, { totalDue: td, minDue: md, dueDate: billDueDate || null });
+              setBillSaving(false);
+              setBillSaved(true);
             }}
-            disabled={submitting || !merchant || !amount || !cardId}
-            style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", background: (merchant && amount && cardId && !submitting) ? "linear-gradient(90deg,#4286f4,#34e89e)" : "#1e1e1e", color: (merchant && amount && cardId && !submitting) ? "#000" : "#333", fontWeight: 800, fontSize: 15, cursor: (merchant && amount && cardId && !submitting) ? "pointer" : "not-allowed" }}>
-            {submitting ? "Adding…" : "Add Transaction"}
+            disabled={billSaving || !billCardId || (!parseFloat(billTotal) && !billDueDate)}
+            style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", background: (!billSaving && billCardId && (parseFloat(billTotal) || billDueDate)) ? "linear-gradient(90deg,#e94560,#f97316)" : "#1e1e1e", color: (!billSaving && billCardId && (parseFloat(billTotal) || billDueDate)) ? "#fff" : "#333", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>
+            {billSaving ? "Updating…" : "Update Card Bill"}
           </button>
-        </>}
+        </>)}
       </div>
     </div>
   );
@@ -2862,13 +3014,29 @@ export default function CardIQ() {
       setTxns(prev => [{ ...r.data, id: r.id, cardId: r.card_id }, ...prev]);
     }
     if (card && rest.type === "debit") {
-      const updated = { ...card, spent: card.spent + rest.amount, totalDue: card.totalDue + rest.amount,
-        points: (card.points || 0) + points };
+      // Only update spent (utilisation) — totalDue reflects billed statement amount only
+      const updated = { ...card, spent: card.spent + rest.amount, points: (card.points || 0) + points };
       setCards(prev => prev.map(c => c.id === cardId ? updated : c));
       const { id, ...data } = updated;
       supabase.from("cards").update({ data }).eq("id", id);
     }
     setShowSMSModal(false);
+  };
+
+  const handleBillingUpdate = async (cardId, { totalDue, minDue, dueDate }) => {
+    const card = cards.find(c => c.id === cardId);
+    if (!card) return;
+    const unbilledAmt = txns
+      .filter(t => t.cardId === cardId && (t.source === "sms" || t.source === "manual") && t.type !== "credit")
+      .reduce((s, t) => s + t.amount, 0);
+    const updated = {
+      ...card,
+      ...(totalDue > 0 && { totalDue, spent: totalDue + unbilledAmt }),
+      ...(minDue   > 0 && { minDue }),
+      ...(dueDate       && { dueDate }),
+    };
+    setCards(prev => prev.map(c => c.id === cardId ? updated : c));
+    await supabase.from("cards").update({ data: updated }).eq("id", cardId);
   };
 
   const now   = new Date();
@@ -3030,7 +3198,7 @@ export default function CardIQ() {
       {editCard  && <AddEditCardModal card={editCard} onSave={handleSaveCard} onClose={() => setEditCard(null)} communityCards={communityCards} />}
       {showSubmitCard && <SubmitCardModal initialName={submitCardName} onSubmit={handleSubmitCommunityCard} onClose={() => setShowSubmitCard(false)} />}
       {parsedStatement && <StatementReviewModal parsedTxns={parsedStatement.txns} rawLines={parsedStatement.rawLines} billing={parsedStatement.billing} identity={parsedStatement.identity} cards={cards} onImport={handleImportStatement} onClose={() => setParsedStatement(null)} />}
-      {showSMSModal && cards.length > 0 && <SMSParseModal cards={cards} onAdd={handleSMSAdd} onClose={() => setShowSMSModal(false)} />}
+      {showSMSModal && cards.length > 0 && <SMSParseModal cards={cards} onAdd={handleSMSAdd} onBillingUpdate={handleBillingUpdate} onClose={() => setShowSMSModal(false)} />}
       {pendingPDFFile && <PDFPasswordModal isWrong={pdfPasswordErr === "PASSWORD_WRONG"} onSubmit={handlePasswordSubmit} onClose={() => { setPendingPDFFile(null); setPdfPasswordErr(null); }} />}
 
       {/* RBL auto-save success toast */}
